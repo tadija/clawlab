@@ -1,0 +1,20 @@
+# common
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.local
+.nvim/
+.vscode/
+
+# agents (ignore everything by default)
+agents/**
+
+# allowlist (manual version control)
+!agents/
+!agents/**/
+!agents/**/.gitkeep
+
+# ignore workspace dirs inside agents
+agents/**/workspace/
+
