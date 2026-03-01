@@ -1,0 +1,9 @@
+ports:
+  001-openclaw_gateway=18789
+  002-openclaw_gateway=18790
+  003-picoclaw_gateway=18791
+  004-picoclaw_gateway=18792
+  005-zeroclaw_gateway=42617
+  006-zeroclaw_gateway=42618
+  007-zeroclaw_gateway=42619
+
