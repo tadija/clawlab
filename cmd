@@ -200,7 +200,17 @@ func portFor(agent: String) -> String? {
 func execInteractive(_ argv: [String]) -> Never {
     var cArgs = argv.map { strdup($0) }
     cArgs.append(nil)
-    execvp(cArgs[0], &cArgs)
+    guard let command = cArgs[0] else {
+        fputs("no command provided\n", stderr)
+        exit(1)
+    }
+    cArgs.withUnsafeMutableBufferPointer { argsBuffer in
+        guard let argv = argsBuffer.baseAddress else {
+            fputs("no argv provided\n", stderr)
+            exit(1)
+        }
+        execvp(command, argv)
+    }
     perror("execvp")
     exit(1)
 }
@@ -223,7 +233,7 @@ func handleMake(agent: String, agentURL: URL) -> Never {
     do {
         try FileManager.default.createDirectory(at: agentURL, withIntermediateDirectories: true)
         let gitkeepURL = agentURL.appendingPathComponent(".gitkeep")
-        FileManager.default.createFile(atPath: gitkeepURL.path, contents: nil)
+        _ = FileManager.default.createFile(atPath: gitkeepURL.path, contents: nil)
         print("created working dir: \(agent)")
         exit(0)
     } catch {
