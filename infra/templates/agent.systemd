@@ -1,0 +1,21 @@
+[Unit]
+Description=Agent %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=__CLAWLAB_USER__
+Group=__CLAWLAB_GROUP__
+UMask=0002
+WorkingDirectory=__CLAWLAB_ROOT__
+__PATH_BLOCK__
+EnvironmentFile=-__CLAWLAB_ROOT__/config/custom/env/agents.env
+EnvironmentFile=-__CLAWLAB_ROOT__/config/custom/env/agents/%i.env
+ExecStart=__CLAWLAB_ROOT__/cmd %i start
+Restart=always
+RestartSec=3s
+StandardOutput=append:__CLAWLAB_ROOT__/state/logs/agent/%i.log
+StandardError=append:__CLAWLAB_ROOT__/state/logs/agent/%i.err
+
+[Install]
+WantedBy=multi-user.target

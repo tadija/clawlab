@@ -1,9 +1,8 @@
 # common
+.codex
+.claude
 .DS_Store
 Thumbs.db
-.env
-.env.*
-*.local
 .nvim/
 .vscode/
 
@@ -18,3 +17,9 @@ agents/**
 # ignore workspace dirs inside agents
 agents/**/workspace/
 
+# local infra/state
+config/custom/host/.env
+config/custom/env/*.env
+config/custom/env/**/*.env
+infra/generated/
+state/

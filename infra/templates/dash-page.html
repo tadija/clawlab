@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__PAGE_TITLE__</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --accent-default: #0f766e;
+      --accent: var(--accent-default);
+      --bg: #f4f1ea;
+      --text: #1f2937;
+      --muted: #57534e;
+      --panel: #fffdf8;
+      --panel-border: #d6d3d1;
+      --code-bg: #ebe7df;
+      --control-bg: #ebe7df;
+      --control-hover-bg: #fffdf8;
+      --control-hover-text: var(--accent);
+      --control-active-bg: var(--accent);
+      --control-active-text: #f8fafc;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --accent-default: #2dd4bf;
+      --bg: #15191d;
+      --text: #e7ecf2;
+      --muted: #a4afba;
+      --panel: #1e2429;
+      --panel-border: #343d45;
+      --code-bg: #262d34;
+      --control-bg: #262d34;
+      --control-hover-bg: #313942;
+      --control-hover-text: #ffffff;
+      --status-running-bg: #0f3d35;
+      --status-running-text: #7ef0da;
+      --status-configured-bg: #4a3412;
+      --status-configured-text: #ffd98a;
+      --status-unavailable-bg: #4a1f26;
+      --status-unavailable-text: #ffb6c1;
+      --status-unknown-bg: #313942;
+      --status-unknown-text: #c9d3dd;
+    }
+    html:not([data-theme="dark"]) {
+      --status-running-bg: #d1fae5;
+      --status-running-text: #065f46;
+      --status-configured-bg: #fef3c7;
+      --status-configured-text: #92400e;
+      --status-unavailable-bg: #fee2e2;
+      --status-unavailable-text: #991b1b;
+      --status-unknown-bg: #e5e7eb;
+      --status-unknown-text: #374151;
+    }
+    body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); transition: background-color 180ms ease, color 180ms ease; }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
+    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .host-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
+    h1 { margin: 0 0 8px; font-size: 2rem; }
+    .title-link { color: inherit; font-weight: inherit; text-decoration: none; }
+    .title-link:hover { color: var(--accent); text-decoration: none; }
+    .title-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+    p { margin: 0 0 16px; }
+    .meta { color: var(--muted); margin-top: 28px; display: grid; gap: 4px; }
+    .meta p { margin: 0; }
+    .dashboard-section { margin-top: 24px; }
+    .dashboard-section h2 { margin: 0 0 12px; font-size: 0.95rem; line-height: 1.2; }
+    .section-toggle { appearance: none; border: 0; background: transparent; color: var(--text); padding: 0; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; }
+    .section-toggle:hover { color: var(--accent); }
+    .section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+    .section-caret { display: inline-block; width: 0.7em; transition: transform 160ms ease; }
+    .dashboard-section.is-collapsed .section-caret { transform: rotate(-90deg); }
+    .dashboard-section.is-collapsed ul { display: none; }
+    ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+    li { padding: 14px 16px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; transition: background-color 180ms ease, border-color 180ms ease; }
+    a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+    .item-name { color: var(--text); font-weight: 600; }
+    small { color: var(--muted); margin-left: 8px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; transition: background-color 180ms ease; }
+    .tailscale-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 24px; }
+    .segmented { display: inline-flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: var(--control-bg); border-radius: 999px; margin: 0; transition: background-color 180ms ease; }
+    .segmented-link { padding: 7px 14px; border-radius: 999px; color: var(--muted); font-weight: 600; transition: background-color 180ms ease, color 180ms ease; }
+    .segmented-link:hover { text-decoration: none; color: var(--control-hover-text); background: var(--control-hover-bg); }
+    .segmented-link.is-active { background: var(--control-active-bg); color: var(--control-active-text); }
+    .tint-trigger { position: relative; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; }
+    .segment-label { position: relative; z-index: 1; pointer-events: none; }
+    .segment-tint-picker { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .segment-tint-picker::-webkit-color-swatch-wrapper { padding: 0; }
+    .segment-tint-picker::-webkit-color-swatch { border: 0; }
+    .segment-tint-picker::-moz-color-swatch { border: 0; }
+    .controls { display: inline-flex; align-items: center; gap: 8px; }
+    .icon-button { appearance: none; border: 1px solid var(--panel-border); background: var(--panel); color: var(--text); width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease; }
+    .icon-button:hover { transform: translateY(-1px); }
+    .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .icon-button.is-active { background: var(--control-active-bg); color: var(--control-active-text); border-color: color-mix(in srgb, var(--control-active-bg) 65%, var(--panel-border)); }
+    .icon-svg { width: 16px; height: 16px; display: block; fill: currentColor; }
+    .status-running, .status-configured, .status-unavailable, .status-unknown { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .status-running { background: var(--status-running-bg); color: var(--status-running-text); }
+    .status-configured { background: var(--status-configured-bg); color: var(--status-configured-text); }
+    .status-unavailable { background: var(--status-unavailable-bg); color: var(--status-unavailable-text); }
+    .status-unknown { background: var(--status-unknown-bg); color: var(--status-unknown-text); }
+    @media (max-width: 640px) {
+    .topbar { flex-direction: column; }
+    .controls { align-self: flex-end; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <h1><a class="title-link" id="reset-look" href="" aria-label="Reset page look" title="Reset page look">clawlab</a></h1>
+      <div class="controls">
+        <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle light and dark mode" title="Toggle light and dark mode">◐</button>
+      </div>
+    </div>
+    <div class="host-row">
+      <p>Host: <code>__HOST_NAME__</code></p>
+    </div>
+    <div class="tailscale-row">
+      <div class="segmented">
+__TAILSCALE_NAV_HTML__
+      </div>
+    </div>
+__AGENT_LINKS_HTML__
+    <div class="meta">
+      <p>Generated at <code>__GENERATED_AT__</code>.</p>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const themeToggle = document.getElementById('theme-toggle');
+      const tintPicker = document.getElementById('active-tint-picker');
+      const resetLook = document.getElementById('reset-look');
+      const sections = Array.from(document.querySelectorAll('.dashboard-section'));
+      const themeKey = 'theme';
+      const tintKey = 'clawlab-tint';
+      const sectionKeyPrefix = 'clawlab-section-collapsed:';
+      const storedTheme = localStorage.getItem(themeKey);
+      const storedTint = localStorage.getItem(tintKey);
+      const currentDefaultTint = () => getComputedStyle(root).getPropertyValue('--accent-default').trim() || '#0f766e';
+      const resetTint = () => {
+        root.dataset.theme = 'light';
+        localStorage.setItem(themeKey, 'light');
+        root.style.removeProperty('--accent');
+        if (tintPicker) {
+          tintPicker.value = currentDefaultTint();
+        }
+        localStorage.removeItem(tintKey);
+      };
+
+      if (storedTheme === 'dark' || storedTheme === 'light') {
+        root.dataset.theme = storedTheme;
+      }
+      if (storedTint && tintPicker) {
+        root.style.setProperty('--accent', storedTint);
+        tintPicker.value = storedTint;
+      } else if (tintPicker) {
+        tintPicker.value = currentDefaultTint();
+      }
+
+      themeToggle?.addEventListener('click', () => {
+        const nextTheme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = nextTheme;
+        localStorage.setItem(themeKey, nextTheme);
+        if (!localStorage.getItem(tintKey) && tintPicker) {
+          tintPicker.value = currentDefaultTint();
+        }
+      });
+
+      resetLook?.addEventListener('click', (event) => {
+        event.preventDefault();
+        resetTint();
+      });
+
+      tintPicker?.addEventListener('input', (event) => {
+        const value = event.target.value;
+        root.style.setProperty('--accent', value);
+        localStorage.setItem(tintKey, value);
+      });
+
+      for (const section of sections) {
+        const id = section.dataset.section;
+        const toggle = section.querySelector('.section-toggle');
+        if (!id || !toggle) continue;
+        const storageKey = `${sectionKeyPrefix}${id}`;
+        if (localStorage.getItem(storageKey) === 'true') {
+          section.classList.add('is-collapsed');
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+        toggle.addEventListener('click', () => {
+          const collapsed = section.classList.toggle('is-collapsed');
+          toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+          localStorage.setItem(storageKey, String(collapsed));
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

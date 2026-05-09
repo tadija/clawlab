@@ -1,0 +1,85 @@
+# common
+.codex
+.claude
+.DS_Store
+Thumbs.db
+.nvim/
+.vscode/
+agents/**/.local/
+agents/**/cron/jobs.json
+
+# openclaw
+agents/**/completions/
+agents/**/devices/
+agents/**/identity/
+agents/**/logs/
+agents/**/media/
+agents/**/telegram/
+agents/**/*.bak*
+agents/**/runs.sqlite*
+agents/**/auth-profiles.json
+agents/**/auth-state.json
+agents/**/exec-approvals.json
+agents/**/models.json
+agents/**/plugin-runtime-deps
+agents/**/sessions.json*
+agents/**/update-check.json
+agents/**/workspace-state.json
+agents/**/workspace/*audio*
+
+# hermes
+agents/**/auth.lock
+agents/**/.cache
+agents/**/.clean_shutdown
+agents/**/.hermes_history
+agents/**/.update_check
+agents/**/cron/.tick.lock
+agents/**/.npm
+agents/**/bin
+agents/**/hermes-agent
+agents/**/gateway.lock
+agents/**/models_dev_cache.json
+agents/**/Library
+**/.hermes/Skills
+
+# mercury
+agents/**/.mercury/daemon*
+agents/**/.mercury/memory
+agents/**/.mercury/token-usage.json
+
+# nullclaw
+agents/**/memory.db*
+agents/**/llm_token_usage.*
+agents/**/update-offset-main.*
+
+# picoclaw
+agents/**/auth.json
+agents/**/state.json
+agents/**/heartbeat.jsonl
+agents/**/heartbeat.log
+agents/**/heartbeat.meta.*
+agents/**/.picoclaw.pid
+agents/**/.security.yml
+
+# zeroclaw
+agents/**/daemon_state.json
+agents/**/models_cache.json
+agents/**/memory_hygiene_state.json
+agents/**/syscall*
+agents/**/brain*
+agents/**/*.db*
+
+# local infra/state
+config/custom/host/.env
+config/custom/env/*.env
+config/custom/env/**/*.env
+infra/generated/
+state/
+
+# custom
+/dispatcher/
+/graveyard/
+shared/icloud
+shared/gdrive
+shared/projects
+shared/repos
