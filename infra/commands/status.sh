@@ -12,6 +12,7 @@ main() {
   local -a requested=()
   local item
   local managed_service_id
+  local had_error=0
 
   while IFS= read -r item; do
     [[ -n "$item" ]] || continue
@@ -25,10 +26,25 @@ main() {
 
   for item in "${requested[@]}"; do
     if is_agent_id "$item"; then
-      if is_linux; then
-        printf 'agent %s: %s (systemd/agent@%s, pid=%s)\n' "$item" "$(systemd_service_state "agent@${item}")" "$item" "$(systemd_service_pid "agent@${item}")"
+      local agent_name
+      local agent_kind
+      agent_name="$(printf '%s' "$item")"
+      if ! agent_kind="$(agent_kind_for_id "$item" 2>/dev/null)"; then
+        printf 'agent %s: unknown (unable to determine kind)\n' "$agent_name" >&2
+        had_error=1
+        continue
+      fi
+      if [[ ! -f "$(agent_kind_manifest_path "$agent_kind")" && ! -f "$(custom_agent_kind_manifest_path "$agent_kind")" ]]; then
+        printf 'agent %s (%s): unknown kind manifest\n' "$agent_name" "$agent_kind" >&2
+        had_error=1
+        continue
+      fi
+      if ! agent_is_managed "$item"; then
+        printf 'agent %s (%s): interactive\n' "$agent_name" "$agent_kind"
+      elif is_linux; then
+        printf 'agent %s (%s): %s (systemd/agent@%s, pid=%s)\n' "$agent_name" "$agent_kind" "$(systemd_service_state "agent@${item}")" "$item" "$(systemd_service_pid "agent@${item}")"
       elif is_macos; then
-        printf 'agent %s: %s (launchd/%s, pid=%s)\n' "$item" "$(launchd_service_state "$(service_label_for_agent "$item")")" "$(service_label_for_agent "$item")" "$(launchd_service_pid "$(service_label_for_agent "$item")")"
+        printf 'agent %s (%s): %s (launchd/%s, pid=%s)\n' "$agent_name" "$agent_kind" "$(launchd_service_state "$(service_label_for_agent "$item")")" "$(service_label_for_agent "$item")" "$(launchd_service_pid "$(service_label_for_agent "$item")")"
       else
         echo "unsupported platform: $(uname -s)"
         exit 1
@@ -59,9 +75,12 @@ main() {
       fi
     else
       echo "unknown service or agent id: $item"
-      exit 1
+      had_error=1
+      continue
     fi
   done
+
+  exit "$had_error"
 }
 
 main "$@"

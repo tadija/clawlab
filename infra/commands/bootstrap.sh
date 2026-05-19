@@ -4,14 +4,11 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="bootstrap"
 load_host_env
 
 INFRA_DIR="$(infra_root)"
 CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
-
-progress() {
-  printf '[bootstrap] %s\n' "$1"
-}
 
 run_agent_kind_installers() {
   local kind
@@ -29,7 +26,7 @@ run_agent_kind_installers() {
           echo "agent kind ${kind} is missing a valid CLAWLAB_AGENT_INSTALL_SCRIPT"
           exit 1
         fi
-        progress "installing agent runtime for ${kind}"
+        log "installing agent runtime for ${kind}"
         bash "$script_path"
         ;;
       *)
@@ -49,7 +46,7 @@ run_service_installers() {
     if [[ "$service_id" == "caddy" ]]; then
       while IFS= read -r managed_service_id; do
         [[ -n "$managed_service_id" ]] || continue
-        progress "installing service runtime for ${managed_service_id}"
+        log "installing service runtime for ${managed_service_id}"
         run_service_installer "$managed_service_id"
       done < <(caddy_managed_service_ids)
     fi
@@ -58,7 +55,7 @@ run_service_installers() {
       "")
         ;;
       *)
-        progress "installing service runtime for ${service_id}"
+        log "installing service runtime for ${service_id}"
         run_service_installer "$service_id"
         ;;
     esac
@@ -94,7 +91,7 @@ cleanup_linux() {
     load_service_definition "$service_id"
     unit_path="$(service_systemd_unit_path)"
     if [[ -f "$unit_path" ]]; then
-      progress "removing leftover $(service_systemd_name)"
+      log "removing leftover $(service_systemd_name)"
       sudo systemctl disable --now "$(service_systemd_name)" >/dev/null 2>&1 || true
       sudo rm -f "$unit_path"
       removed_any=1
@@ -109,7 +106,7 @@ cleanup_linux() {
   done < <(requested_agent_ids_from_env)
 
   if ((has_agents == 0)) && [[ -f "$(agent_systemd_unit_path)" ]]; then
-    progress "removing leftover agent@ template"
+    log "removing leftover agent@ template"
     sudo systemctl disable --now "agent@" >/dev/null 2>&1 || true
     sudo rm -f "$(agent_systemd_unit_path)"
     removed_any=1
@@ -121,7 +118,7 @@ cleanup_linux() {
   fi
 
   if ((removed_any == 0)); then
-    progress "no leftover systemd units found"
+    log "no leftover systemd units found"
   fi
 }
 
@@ -130,7 +127,7 @@ cleanup_macos() {
   local service_id
   local plist
   local label
-  local requested_agents=""
+  local preserved_ids=""
   local agent_id
   local current_id
   local managed_by_caddy
@@ -138,8 +135,20 @@ cleanup_macos() {
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
-    requested_agents+=" $agent_id"
+    preserved_ids+=" $agent_id"
   done < <(requested_agent_ids_from_env)
+
+  while IFS= read -r service_id; do
+    [[ -n "$service_id" ]] || continue
+    preserved_ids+=" $service_id"
+  done < <(requested_service_ids_from_env)
+
+  if service_requested_from_env "caddy"; then
+    while IFS= read -r managed_service_id; do
+      [[ -n "$managed_service_id" ]] || continue
+      preserved_ids+=" $managed_service_id"
+    done < <(caddy_managed_service_ids)
+  fi
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
@@ -161,7 +170,7 @@ cleanup_macos() {
     plist="$(service_launchd_plist_path)"
     label="$(service_launchd_label)"
     if [[ -f "$plist" ]]; then
-      progress "removing leftover $label"
+      log "removing leftover $label"
       sudo launchctl bootout system "$plist" >/dev/null 2>&1 || true
       sudo launchctl disable "system/$label" >/dev/null 2>&1 || true
       sudo rm -f "$plist"
@@ -173,11 +182,11 @@ cleanup_macos() {
     [[ -e "$plist" ]] || continue
     current_id="${plist##*.clawlab.}"
     current_id="${current_id%.plist}"
-    case " $requested_agents " in
+    case " $preserved_ids " in
       *" $current_id "*) ;;
       *)
         label="$(launchd_label_prefix).${current_id}"
-        progress "removing leftover $label"
+        log "removing leftover $label"
         sudo launchctl bootout system "$plist" >/dev/null 2>&1 || true
         sudo launchctl disable "system/$label" >/dev/null 2>&1 || true
         sudo rm -f "$plist"
@@ -187,7 +196,7 @@ cleanup_macos() {
   done
 
   if ((removed_any == 0)); then
-    progress "no leftover launchd plists found"
+    log "no leftover launchd plists found"
   fi
 }
 
@@ -207,17 +216,16 @@ if ! command -v brew >/dev/null 2>&1; then
   exit 1
 fi
 
-progress "rendering Brewfile"
+log "rendering Brewfile"
 bash "$(repo_root)/infra/commands/render.sh" brew
-progress "installing Homebrew dependencies"
+ensure_clawlab_state_root
+cleanup_service_manager_artifacts
+log "installing Homebrew dependencies"
 brew bundle --file "$INFRA_DIR/generated/Brewfile"
 run_agent_kind_installers
 run_service_installers
 
-ensure_clawlab_state_root
-cleanup_service_manager_artifacts
-
-progress "installing service-manager artifacts"
+log "installing service-manager artifacts"
 bash "$(repo_root)/infra/commands/install.sh" "$@"
 
-echo "bootstrap complete"
+log "complete"

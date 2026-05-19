@@ -4,6 +4,7 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="install"
 load_host_env
 
 CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
@@ -13,10 +14,6 @@ if [[ -z "$CLAWLAB_USER" ]]; then
   echo "CLAWLAB_USER is not set; set it in config/custom/host/.env"
   exit 1
 fi
-
-progress() {
-  printf '[install] %s\n' "$1"
-}
 
 prepare_service_install() {
   local service_id="$1"
@@ -75,10 +72,13 @@ main() {
 
   for item in "${requested[@]}"; do
     index=$((index + 1))
-    progress "[$index/$total] installing $item"
+    log_verbose "[$index/$total] installing $item"
 
     if is_agent_id "$item"; then
-      if is_linux; then
+      known_agent_kind_for_id "$item" >/dev/null || continue
+      if ! agent_is_managed "$item"; then
+        log_verbose "[$index/$total] skipped $item [interactive]"
+      elif is_linux; then
         if ((agent_template_installed == 0)); then
           local dest
           dest="$(install_systemd_agent_unit_template "$CLAWLAB_ROOT" "$CLAWLAB_USER")"
@@ -106,17 +106,21 @@ main() {
       exit 1
     fi
 
-    progress "[$index/$total] finished $item"
+    log_verbose "[$index/$total] finished $item"
   done
 
-  if is_linux && ((SYSTEMD_RELOAD == 1)); then
+  if ((${#INSTALLED_PATHS[@]} == 0)); then
+    log_verbose "no service-manager artifacts installed"
+  elif is_linux && ((SYSTEMD_RELOAD == 1)); then
     sudo systemctl daemon-reload
     printf 'installed systemd units:\n'
   elif is_macos; then
     printf 'installed launchd plists:\n'
   fi
-  printf '  %s\n' "${INSTALLED_PATHS[@]}"
-  progress "completed"
+  if ((${#INSTALLED_PATHS[@]} > 0)); then
+    printf '  %s\n' "${INSTALLED_PATHS[@]}"
+  fi
+  log_verbose "completed"
 }
 
 main "$@"

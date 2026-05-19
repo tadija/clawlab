@@ -29,7 +29,8 @@
 ./cmd infra doctor [agents|services|agent-id|service-id...]     # print host diagnostics and flag unhealthy requested items
 ./cmd infra log [agents|services|agent-id|service-id...]        # show stdout/stderr logs
 ./cmd infra status [agents|services|agent-id|service-id...]     # show service-manager status
-./cmd infra render <all|brew|caddy>                             # render generated infra files without installing
+./cmd infra render <all|brew|caddy|dash>                        # render generated infra files
+./cmd infra update [agents|services|agent-id|service-id...] [--no-pull] [--no-restart] [--dry-run]  # pull latest and restart targets
 ```
 
 Common host-default flow:
@@ -141,12 +142,14 @@ CLAWLAB_USER=agent
 CLAWLAB_GROUP=staff
 CLAWLAB_ROOT=/Users/Shared/clawlab
 CLAWLAB_PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+CLAWLAB_PROJECTS="clawlab=/Users/Shared/clawlab app=/Users/Shared/clawlab/shared/projects/app"
 ```
 
 Host fields:
 
 - `CLAWLAB_AGENTS` lists the agent ids assigned to this host
 - `CLAWLAB_SERVICES` lists the shared services assigned to this host
+- `CLAWLAB_PROJECTS` lists dashboard project rows as `title=/absolute/path` pairs; `/tty/<title>/` opens a shell in that path, and the project action menu opens supported interactive agent TUIs in that same path
 - `CLAWLAB_HOST` selects the active segmented-nav host for the generated Caddy landing page
 - `CLAWLAB_USER` is the account that should own and run the managed processes
 - `CLAWLAB_GROUP` is the shared group used for the repo, such as `staff` on macOS or the service user's primary group on Linux
@@ -180,7 +183,7 @@ These commands prepare the host and manage service-manager artifacts. With no ex
 ./cmd infra uninstall caddy
 ```
 
-`bootstrap` installs packages and runtime prerequisites, prepares the base local state layout, removes service-manager leftover artifacts that are no longer part of the current host assignment, and installs service-manager artifacts for the requested host items.
+`bootstrap` installs packages and runtime prerequisites, runs installer hooks, prepares the base local state layout, removes service-manager leftover artifacts that are no longer part of the current host assignment, and installs service-manager artifacts for the requested host items.
 
 `install` writes launchd plists or systemd units for the requested host items.
 
@@ -236,8 +239,9 @@ These commands control installed launchd/systemd items. Services are resolved be
 - starts agents through `agent@<id>` systemd units on Linux or rendered launchd plists on macOS
 - starts managed agents with a group-writable umask so regenerated files remain readable by repo users in `CLAWLAB_GROUP`
 - starts services through their rendered service-manager artifacts
-- refreshes generated dash/Caddy outputs when starting `dash` or `caddy`
+- refreshes generated dash/Caddy outputs when starting `dash-http` or `caddy`
 - starts Caddy-managed helper services before `caddy`
+- does not run installer hooks; use `bootstrap` or `install` for installer/setup work
 
 Set `CLAWLAB_LOG_VERBOSE=1` to print extra diagnostics from repair steps during commands such as `./cmd infra start`.
 
@@ -277,15 +281,15 @@ These commands inspect host items and their logs. They do not install, remove, s
 `render.sh` writes host-local derived files without installing service-manager artifacts.
 
 ```bash
-./cmd infra render <all|brew|caddy>
+./cmd infra render <all|brew|caddy|dash>
 ```
 
 - `infra/generated/Brewfile` is generated from `config/custom/host/.env`, `config/agents/*.env`, `config/custom/override/agents/*.env`, `config/services/*.env`, and `config/custom/override/services/*.env`
 - `infra/generated/Caddyfile` is generated from `config/custom/repo.ini[agent-ports]`, `CLAWLAB_AGENTS`, and Caddy-enabled services
-- `infra/generated/caddy/index.html` is generated from `infra/templates/dash-page.html`
+- `infra/generated/caddy/index.html` is generated from `infra/templates/dash-page.html`, `CLAWLAB_AGENTS`, `CLAWLAB_SERVICES`, and optional `CLAWLAB_PROJECTS`
 - `infra/commands/render.sh brew` runs automatically during `bootstrap.sh` before `brew bundle`
 - `infra/commands/render.sh caddy` also refreshes the generated dash page from `infra/templates/dash-page.html`
-- `caddy` can manage a root helper service declared in [`config/services/caddy.env`](../config/services/caddy.env) via `CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_ID`; the default is `dash`, and when that helper is not running, the managed `:80` site falls back to the generated static page
+- `caddy` can manage root helper services declared in [`config/services/caddy.env`](../config/services/caddy.env) via `CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS`; the first entry is used for the root upstream, and the full list is treated as managed by caddy
 
 `infra/generated/` is host-local and gitignored, so generated artifacts like the Brewfile, Caddyfile, dash binary, and generated landing page are not tracked.
 
@@ -331,11 +335,10 @@ infra/
     stop.sh
     uninstall.sh
   installers/
-    dash.sh
+    dash-tty.sh
     hermes.sh
     mercury.sh
     nanobot.sh
-    vibetunnel.sh
   templates/
     agent.launchd.plist
     agent.systemd
@@ -343,30 +346,36 @@ infra/
     service.launchd.plist
     service.systemd
   utils/
-    dash-server.swift
+    dash-http-server.swift
+    dash-tty-server.swift
     mongodb-server.sh
     mysql-server.sh
     postgres-server.sh
     relocate-root.sh
 config/
   agents/
+    claude.env
+    codex.env
+    gemini.env
+    goose.env
     hermes.env
     mercury.env
     moltis.env
     nanobot.env
     nullclaw.env
     openclaw.env
+    pi.env
     picoclaw.env
     zeroclaw.env
   services/
     caddy.env
-    dash.env
+    dash-http.env
+    dash-tty.env
     mongodb.env
     mysql.env
     nats.env
     postgres.env
     tailscale.env
-    vibetunnel.env
   custom/
     repo.ini
     host/
@@ -378,9 +387,7 @@ config/
       agents/
         .gitkeep
       infra/
-        vt.sh
       services/
-        vibetunnel.env
 state/
   logs/
     agent/

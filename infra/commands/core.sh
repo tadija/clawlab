@@ -317,18 +317,21 @@ verbose_enabled() {
   esac
 }
 
-verbose_log() {
-  verbose_enabled || return 0
-  printf '%s\n' "$1" >&2
+log() {
+  if [[ -n "${CLAWLAB_LOG_PREFIX:-}" ]]; then
+    printf '[%s] %s\n' "$CLAWLAB_LOG_PREFIX" "$1"
+  else
+    printf '%s\n' "$1" >&2
+  fi
 }
 
-verbose_progress() {
+log_error() {
+  log "$1" >&2
+}
+
+log_verbose() {
   verbose_enabled || return 0
-  if declare -F progress >/dev/null; then
-    progress "$1"
-  else
-    verbose_log "$1"
-  fi
+  log "$1"
 }
 
 service_manifest_dir() {
@@ -390,10 +393,6 @@ custom_agent_kind_manifest_path() {
   printf '%s/%s.env' "$(custom_agent_kind_manifest_dir)" "$kind"
 }
 
-agent_kind_definition_exists() {
-  [[ -f "$(agent_kind_manifest_path "$1")" || -f "$(custom_agent_kind_manifest_path "$1")" ]]
-}
-
 reset_service_definition() {
   unset CLAWLAB_SERVICE_ID || true
   unset CLAWLAB_SERVICE_DESCRIPTION || true
@@ -431,7 +430,7 @@ reset_service_definition() {
   unset CLAWLAB_SERVICE_CADDY_ROUTE || true
   unset CLAWLAB_SERVICE_CADDY_UPSTREAM || true
   unset CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM || true
-  unset CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_ID || true
+  unset CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS || true
   unset CLAWLAB_SERVICE_PORT || true
 }
 
@@ -439,11 +438,15 @@ reset_agent_kind_definition() {
   unset CLAWLAB_AGENT_KIND || true
   unset CLAWLAB_AGENT_HOME_ENV || true
   unset CLAWLAB_AGENT_SETUP_ARGS || true
+  unset CLAWLAB_AGENT_TUI_ARGS || true
   unset CLAWLAB_AGENT_START_ARGS || true
   unset CLAWLAB_AGENT_START_PORT_FLAG || true
   unset CLAWLAB_AGENT_FORWARD_PREFIX || true
   unset CLAWLAB_AGENT_BREW_TAPS || true
   unset CLAWLAB_AGENT_BREW_PACKAGES || true
+  unset CLAWLAB_AGENT_BREW_CASKS || true
+  unset CLAWLAB_AGENT_BREW_PACKAGES_MACOS_ARM64 || true
+  unset CLAWLAB_AGENT_BREW_CASKS_MACOS_ARM64 || true
   unset CLAWLAB_AGENT_INSTALL_KIND || true
   unset CLAWLAB_AGENT_INSTALL_SCRIPT || true
 }
@@ -523,16 +526,32 @@ service_manifest_field_value() {
 }
 
 caddy_root_service_id() {
-  service_manifest_field_value "caddy" "CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_ID"
+  local service_id
+
+  while IFS= read -r service_id; do
+    [[ -n "$service_id" ]] || continue
+    printf '%s' "$service_id"
+    return 0
+  done < <(caddy_root_service_ids)
+}
+
+caddy_root_service_ids() {
+  local raw
+  local id
+
+  raw="$(service_manifest_field_value "caddy" "CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS")"
+
+  raw="$(trim_commas "$raw")"
+  # shellcheck disable=SC2206
+  local -a ids=($raw)
+  for id in "${ids[@]}"; do
+    [[ -n "$id" && "$id" != "caddy" ]] || continue
+    printf '%s\n' "$id"
+  done
 }
 
 caddy_managed_service_ids() {
-  local service_id
-
-  service_id="$(caddy_root_service_id)"
-  if [[ -n "$service_id" && "$service_id" != "caddy" ]]; then
-    printf '%s\n' "$service_id"
-  fi
+  caddy_root_service_ids
 }
 
 run_service_installer() {
@@ -603,6 +622,21 @@ load_agent_kind_definition() {
   fi
 }
 
+load_agent_definition() {
+  local agent_id="$1"
+  local kind
+
+  kind="$(agent_kind_for_id "$agent_id")"
+  load_agent_kind_definition "$kind"
+}
+
+agent_is_managed() {
+  local agent_id="$1"
+
+  load_agent_definition "$agent_id"
+  [[ -n "${CLAWLAB_AGENT_START_ARGS:-}" ]]
+}
+
 agent_directory_name() {
   local agent_id="$1"
   local match
@@ -629,13 +663,41 @@ agent_kind_for_id() {
   return 1
 }
 
+known_agent_kind_for_id() {
+  local agent_id="$1"
+  local kind
+  local cache_var
+
+  if ! kind="$(agent_kind_for_id "$agent_id" 2>/dev/null)"; then
+    cache_var="CLAWLAB_WARNED_UNKNOWN_AGENT_${agent_id}"
+    if [[ -z "${!cache_var:-}" ]]; then
+      echo "warning: skipping agent ${agent_id}; unable to determine kind" >&2
+      printf -v "$cache_var" 1
+      export "$cache_var"
+    fi
+    return 1
+  fi
+
+  if [[ ! -f "$(agent_kind_manifest_path "$kind")" && ! -f "$(custom_agent_kind_manifest_path "$kind")" ]]; then
+    cache_var="CLAWLAB_WARNED_UNKNOWN_AGENT_KIND_${agent_id}"
+    if [[ -z "${!cache_var:-}" ]]; then
+      echo "warning: skipping agent ${agent_id}; unknown kind manifest: ${kind}" >&2
+      printf -v "$cache_var" 1
+      export "$cache_var"
+    fi
+    return 1
+  fi
+
+  printf '%s' "$kind"
+}
+
 requested_agent_kinds_from_env() {
   local agent_id
   local kind
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
-    kind="$(agent_kind_for_id "$agent_id")" || continue
+    kind="$(known_agent_kind_for_id "$agent_id")" || continue
     [[ -n "$kind" ]] || continue
     printf '%s\n' "$kind"
   done < <(requested_agent_ids_from_env) | sort -u
@@ -1186,7 +1248,7 @@ repair_clawlab_path_permissions() {
   group="$(clawlab_group)"
   mismatch="$(find "$path" \( ! -user "$owner" -o ! -group "$group" -o \( -type d \( ! -perm -020 -o ! -perm -2000 \) \) -o \( -type f ! -perm -020 \) \) -print -quit 2>/dev/null || true)"
   [[ -n "$mismatch" ]] || return 0
-  verbose_log "[repair] $path -> $owner:$group, group-writable directories/files"
+  log_verbose "[repair] $path -> $owner:$group, group-writable directories/files"
   sudo chown -R "$owner:$group" "$path"
   sudo find "$path" -type d -exec chmod g+rwxs {} +
   sudo find "$path" -type f -exec chmod g+rw {} +

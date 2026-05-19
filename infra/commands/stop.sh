@@ -4,17 +4,18 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="stop"
 load_host_env
 
 CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
 
-progress() {
-  printf '[stop] %s\n' "$1"
-}
-
 stop_systemd_service() {
   local service="$1"
-  sudo systemctl disable --now "$service"
+  if verbose_enabled; then
+    sudo systemctl disable --now "$service"
+  else
+    sudo systemctl disable --now "$service" >/dev/null
+  fi
 }
 
 stop_launchd_service() {
@@ -50,8 +51,13 @@ main() {
   local index=0
   for item in "${requested[@]}"; do
     index=$((index + 1))
-    progress "[$index/$total] stopping $item"
+    log_verbose "[$index/$total] stopping $item"
     if is_agent_id "$item"; then
+      known_agent_kind_for_id "$item" >/dev/null || continue
+      if ! agent_is_managed "$item"; then
+        log_verbose "[$index/$total] skipped $item [interactive]"
+        continue
+      fi
       if is_linux; then
         stop_systemd_service "agent@${item}"
       elif is_macos; then
@@ -88,10 +94,10 @@ main() {
       echo "unknown service or agent id: $item"
       exit 1
     fi
-    progress "[$index/$total] finished $item"
+    log_verbose "[$index/$total] finished $item"
   done
 
-  progress "completed"
+  log_verbose "completed"
 }
 
 main "$@"

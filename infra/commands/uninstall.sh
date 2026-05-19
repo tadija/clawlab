@@ -4,13 +4,10 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="uninstall"
 load_host_env
 
 CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
-
-progress() {
-  printf '[uninstall] %s\n' "$1"
-}
 
 remove_systemd_unit() {
   local unit_name="$1"
@@ -97,10 +94,13 @@ main() {
 
   for item in "${requested[@]}"; do
     index=$((index + 1))
-    progress "[$index/$total] starting $item"
+    log "[$index/$total] starting $item"
 
     if is_agent_id "$item"; then
-      if is_linux; then
+      known_agent_kind_for_id "$item" >/dev/null || continue
+      if ! agent_is_managed "$item"; then
+        log "[$index/$total] skipped $item [interactive]"
+      elif is_linux; then
         remove_systemd_agent_instance "$item"
       elif is_macos; then
         if remove_launchd_plist "$(service_label_for_agent "$item")" "$(agent_launchd_plist_path "$item")"; then
@@ -149,13 +149,13 @@ main() {
       exit 1
     fi
 
-    progress "[$index/$total] finished $item"
+    log "[$index/$total] finished $item"
   done
 
   if is_linux; then
     local -a requested_agent_ids=()
     for item in "${requested[@]}"; do
-      if is_agent_id "$item"; then
+      if is_agent_id "$item" && known_agent_kind_for_id "$item" >/dev/null && agent_is_managed "$item"; then
         requested_agent_ids+=("$item")
       fi
     done
@@ -175,7 +175,7 @@ main() {
     echo "No installed unit files or plists were removed."
   fi
 
-  progress "completed"
+  log "completed"
 }
 
 main "$@"

@@ -13,23 +13,28 @@ This directory is the repo-wide catalog for things clawlab knows how to run. Age
 config/
   README.md
   agents/
+    claude.env
+    codex.env
+    gemini.env
+    goose.env
     hermes.env
     mercury.env
     moltis.env
     nanobot.env
     nullclaw.env
     openclaw.env
+    pi.env
     picoclaw.env
     zeroclaw.env
   services/
     caddy.env
-    dash.env
+    dash-http.env
+    dash-tty.env
     mongodb.env
     mysql.env
     nats.env
     postgres.env
     tailscale.env
-    vibetunnel.env
   custom/
     repo.ini
     host/
@@ -47,10 +52,8 @@ config/
         .gitkeep
       infra/
         .gitkeep
-        vt.sh
       services/
         .gitkeep
-        vibetunnel.env
 ```
 
 ## agent manifests
@@ -63,6 +66,7 @@ CLAWLAB_AGENT_ENV="HOME=__AGENT_DIR__|HERMES_HOME=__AGENT_DIR__/.hermes"
 CLAWLAB_AGENT_INSTALL_KIND="script"
 CLAWLAB_AGENT_INSTALL_SCRIPT="infra/installers/hermes.sh"
 CLAWLAB_AGENT_SETUP_ARGS="hermes|setup"
+CLAWLAB_AGENT_TUI_ARGS="hermes|--tui"
 CLAWLAB_AGENT_START_ARGS="hermes|gateway"
 CLAWLAB_AGENT_FORWARD_PREFIX="hermes"
 ```
@@ -74,9 +78,11 @@ Common agent fields:
 - `CLAWLAB_AGENT_INSTALL_KIND="script"` and `CLAWLAB_AGENT_INSTALL_SCRIPT` opt into a custom installer during bootstrap
 - `CLAWLAB_AGENT_HOME_ENV` sets a single home env var to the agent working directory
 - `CLAWLAB_AGENT_ENV` sets explicit env vars, separated with `|`
-- `CLAWLAB_AGENT_SETUP_ARGS` defines the command run by `./cmd <agent-id> bootstrap`
+- `CLAWLAB_AGENT_SETUP_ARGS` defines the command run by `./cmd <agent-id> setup` and by `./cmd make <agent-id-agent-kind>`
+- `CLAWLAB_AGENT_TUI_ARGS` defines the command run by `./cmd <agent-id> tui`; bare `./cmd <agent-id>` uses this when present
 - `CLAWLAB_AGENT_START_ARGS` defines the command run by `./cmd <agent-id> start`
 - `CLAWLAB_AGENT_START_PORT_FLAG` appends the agent port to the start command with a named flag, such as `--port`
+- `CLAWLAB_AGENT_STOP_ARGS` defines the command run by `./cmd <agent-id> stop`; when omitted, stop falls back to killing the start command pattern if start is defined
 - `CLAWLAB_AGENT_FORWARD_PREFIX` defines how unknown `./cmd <agent-id> ...` commands are forwarded to the native agent CLI
 
 Agent command templates use `|` as an argument separator so values can be represented safely in `.env` files.
@@ -101,6 +107,8 @@ CLAWLAB_USER="agent"
 CLAWLAB_GROUP="agent"
 CLAWLAB_AGENTS="000 004 007"
 CLAWLAB_SERVICES="tailscale caddy"
+CLAWLAB_PROJECTS="clawlab=/opt/clawlab app=/srv/app"
+CLAWLAB_TAILSCALE_ONLY="false"
 ```
 
 - `CLAWLAB_HOST` names the current host for generated infra and placeholders
@@ -108,6 +116,8 @@ CLAWLAB_SERVICES="tailscale caddy"
 - `CLAWLAB_USER` and `CLAWLAB_GROUP` set the managed process owner
 - `CLAWLAB_AGENTS` lists the agent ids assigned to this host
 - `CLAWLAB_SERVICES` lists the shared service ids assigned to this host
+- `CLAWLAB_PROJECTS` lists dashboard project rows as `title=/absolute/path` pairs; `/tty/<title>/` opens a shell in that path, and the project action menu opens supported interactive agent TUIs in that same path
+- `CLAWLAB_TAILSCALE_ONLY=true` restricts generated Caddy routes to Tailscale IPs and localhost
 
 `custom/host/.env` is gitignored for local host selection; `custom/repo.ini`, examples, and custom agent/service manifests are tracked.
 
@@ -133,12 +143,12 @@ data-server=http://data-server/
 008=8652
 
 [service-ports]
-dash=2108
+dash-http=2108
+dash-tty=1984
 mysql=3306
 postgres=5432
 mongodb=27017
 nats=4222
-vibetunnel=4022
 ```
 
 The `[agent-ports]` section maps plain agent ids to gateway ports. The CLI uses these ports when starting agents, and Caddy rendering uses them to build agent routes.
@@ -157,7 +167,7 @@ CLAWLAB_SERVICE_DESCRIPTION="Caddy web server"
 CLAWLAB_SERVICE_BIN="caddy"
 CLAWLAB_SERVICE_BREW_PACKAGES="caddy"
 CLAWLAB_SERVICE_ARGS='run --config "__CLAWLAB_ROOT__/infra/generated/Caddyfile" --adapter caddyfile'
-CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_ID="dash"
+CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS="dash-http dash-tty"
 ```
 
 Common service fields:
@@ -185,7 +195,7 @@ Common service fields:
 - `CLAWLAB_SERVICE_CADDY_ROUTE` exposes the service behind Caddy; use `/path`, `:port`, or `host[:port]`
 - `CLAWLAB_SERVICE_CADDY_UPSTREAM` sets the backend Caddy forwards to
 - `CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM` marks a service as the generated Caddy root upstream
-- `CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_ID` on `caddy` chooses the preferred root helper service
+- `CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS` on `caddy` chooses the preferred root helper services; the first entry is used for the root upstream and the full list is treated as managed by caddy
 
 Supported placeholders:
 

@@ -6,12 +6,12 @@ source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
 load_host_env
 
-output_path="$(repo_root)/infra/generated/bin/dash-server"
-source_path="$(repo_root)/infra/utils/dash-server.swift"
+output_path="$(repo_root)/infra/generated/bin/dash-tty-server"
+source_path="$(repo_root)/infra/utils/dash-tty-server.swift"
 module_cache_root="${TMPDIR:-/tmp}/clawlab-swift-module-cache"
 
 if ! command -v swiftc >/dev/null 2>&1; then
-  echo "swiftc is required to build the dash server"
+  echo "swiftc is required to build the dash tty server"
   exit 1
 fi
 
@@ -23,4 +23,4 @@ swiftc -O -o "$output_path" "$source_path"
 
 chmod +x "$output_path"
 
-echo "[built] $output_path"
+log_verbose "[built] $output_path"

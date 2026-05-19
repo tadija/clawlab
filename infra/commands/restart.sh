@@ -4,21 +4,31 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="restart"
 load_host_env
 
-progress() {
-  printf '[restart] %s\n' "$1"
-}
-
 main() {
+  local -a requested=()
+  local item
   local script_dir
   script_dir="$(cd "$(dirname "$0")" && pwd)"
 
-  progress "stopping requested services"
+  while IFS= read -r item; do
+    [[ -n "$item" ]] || continue
+    requested+=("$item")
+  done < <(resolve_requested_items "$@")
+
+  for item in "${requested[@]}"; do
+    if is_agent_id "$item"; then
+      known_agent_kind_for_id "$item" >/dev/null || true
+    fi
+  done
+
+  log "stopping requested services"
   bash "$script_dir/stop.sh" "$@"
-  progress "starting requested services"
+  log "starting requested services"
   bash "$script_dir/start.sh" "$@"
-  progress "completed"
+  log "completed"
 }
 
 main "$@"

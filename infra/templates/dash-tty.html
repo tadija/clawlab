@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__PAGE_TITLE__</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #11161d;
+      --text: #d7e4ef;
+      --muted: #8ea1b3;
+      --accent: #7dd3fc;
+      --accent-strong: #0ea5e9;
+      --border: #223041;
+      --terminal-padding: 12px;
+      --terminal-bg: #0b0f14;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    .frame {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex: 0 0 auto;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+    .brand {
+      color: var(--text);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .brand-separator {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      min-width: 0;
+    }
+    .label {
+      position: relative;
+      display: inline-flex;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .label-button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      font: inherit;
+    }
+    .label-picker {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .label-picker::-webkit-color-swatch-wrapper { padding: 0; }
+    .label-picker::-webkit-color-swatch { border: 0; }
+    .label-picker::-moz-color-swatch { border: 0; }
+    .label-text {
+      position: relative;
+      z-index: 1;
+      pointer-events: none;
+    }
+    code {
+      color: var(--text);
+      background: transparent;
+      padding: 0;
+      overflow-wrap: anywhere;
+    }
+    .status {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      font: inherit;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #f59e0b;
+      box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.14);
+    }
+    .status.is-connected .status-dot {
+      background: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+    }
+    .status.is-closed .status-dot,
+    .status.is-error .status-dot {
+      background: #ef4444;
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
+    }
+    .topbar-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pin-toggle {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .pin-toggle .icon-svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      fill: none;
+    }
+    .pin-toggle:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .pin-toggle.is-pinned {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    .terminal-wrap {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    #screen {
+      height: 100%;
+      overflow: auto;
+      box-sizing: border-box;
+      background: var(--terminal-bg);
+      color: var(--text);
+      user-select: text;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    #screen .xterm,
+    #screen .xterm-viewport {
+      height: 100%;
+    }
+    #screen .xterm {
+      box-sizing: border-box;
+      padding: var(--terminal-padding);
+    }
+    #screen .xterm,
+    #screen .xterm-screen,
+    #screen .xterm-viewport {
+      background: var(--terminal-bg) !important;
+    }
+    #screen .xterm-viewport {
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    .mobile-keydock {
+      display: none;
+      position: fixed;
+      left: 8px;
+      right: 8px;
+      top: 50%;
+      z-index: 20;
+      width: auto;
+      border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--panel) 88%, var(--accent));
+      overflow: hidden;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.36), 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+      touch-action: none;
+      user-select: none;
+    }
+    .mobile-keydock.is-collapsed {
+      left: auto;
+      width: 36px;
+      border-radius: 999px;
+      opacity: 0.82;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    }
+    .mobile-keydock.is-collapsed .mobile-keybar {
+      width: 0;
+      padding-left: 0;
+      padding-right: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .mobile-keydock-toggle {
+      appearance: none;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      border: 1px solid var(--accent);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 4px;
+      padding: 0;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+    }
+    .mobile-keydock-toggle::before {
+      content: ">";
+    }
+    .mobile-keydock:not(.is-collapsed) .mobile-keydock-toggle::before {
+      content: "<";
+    }
+    .mobile-keybar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      min-width: 0;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      scroll-padding: 10px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .mobile-key {
+      appearance: none;
+      min-width: 44px;
+      height: 36px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 16px;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+    .mobile-key:active {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    .mobile-key.is-active {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+    @media (hover: none) and (pointer: coarse) {
+      .topbar {
+        transform: translateY(0);
+        opacity: 1;
+        max-height: 104px;
+        overflow: hidden;
+        transition:
+          transform 260ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+          opacity 180ms ease,
+          max-height 260ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+          padding-top 260ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+          padding-bottom 260ms cubic-bezier(0.18, 0.89, 0.32, 1.18);
+        will-change: transform, opacity, max-height;
+      }
+      html.is-keyboard-open .topbar {
+        transform: translateY(-12px);
+        opacity: 0;
+        max-height: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        pointer-events: none;
+      }
+      .mobile-keydock {
+        display: flex;
+        align-items: center;
+      }
+    }
+    @media (max-width: 640px) and (orientation: portrait) {
+      .topbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+      }
+      .topbar-left {
+        grid-column: 1;
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .brand {
+        justify-self: start;
+      }
+      .brand-separator {
+        display: none;
+      }
+      .meta {
+        justify-self: start;
+        gap: 4px 12px;
+      }
+      .meta > span {
+        flex-basis: 100%;
+      }
+      .cwd-meta {
+        display: none;
+      }
+      .topbar-actions {
+        grid-column: 2;
+        justify-self: end;
+        align-self: center;
+      }
+      .status {
+        cursor: pointer;
+      }
+      html.mobile-alt-active .cwd-meta {
+        display: inline-flex;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="brand">clawlab</div>
+        <div class="brand-separator">&gt;</div>
+        <div class="meta">
+          <span><span class="label" title="Change host terminal background"><span class="label-text">host</span><input class="label-picker" id="host-bg-picker" type="color" aria-label="Change host terminal background"></span> <code id="host-label-value">__HOST_LABEL__</code></span>
+          <span class="cwd-meta"><span class="label" title="Change cwd terminal background"><span class="label-text">cwd</span><input class="label-picker" id="cwd-bg-picker" type="color" aria-label="Change cwd terminal background"></span> <code id="cwd-label-value">__WORKSPACE_LABEL__</code></span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="pin-toggle" id="pin-toggle" type="button" aria-pressed="false" aria-label="Pin terminal session" title="Pin terminal session">
+          <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
+        </button>
+        <button class="status" id="status" type="button" aria-label="Scroll terminal to bottom" title="Scroll to bottom"><span class="status-dot" aria-hidden="true"></span><span id="status-label">connecting</span></button>
+      </div>
+    </div>
+    <div class="mobile-keydock is-collapsed" id="mobile-keydock">
+      <div class="mobile-keybar" aria-label="mobile terminal keys">
+        <button class="mobile-key" data-mobile-key="alt" type="button" tabindex="-1" aria-pressed="false" aria-label="Alt modifier" title="Alt">Alt</button>
+        <button class="mobile-key" data-mobile-key="ctrl-a" type="button" tabindex="-1" aria-label="Tmux prefix" title="Ctrl+A">C-a</button>
+        <button class="mobile-key" data-mobile-key="ctrl-c" type="button" tabindex="-1" aria-label="Interrupt" title="Ctrl+C">C-c</button>
+        <button class="mobile-key" data-mobile-key="ctrl-u" type="button" tabindex="-1" aria-label="Delete line" title="Ctrl+U">C-u</button>
+        <button class="mobile-key" data-mobile-key="tab" type="button" tabindex="-1" aria-label="Tab" title="Tab">Tab</button>
+        <button class="mobile-key" data-mobile-key="escape" type="button" tabindex="-1" aria-label="Escape" title="Escape">Esc</button>
+        <button class="mobile-key" data-mobile-key="page-up" type="button" tabindex="-1" aria-label="Page up" title="Page Up">PgUp</button>
+        <button class="mobile-key" data-mobile-key="page-down" type="button" tabindex="-1" aria-label="Page down" title="Page Down">PgDn</button>
+        <button class="mobile-key" data-mobile-key="left" type="button" tabindex="-1" aria-label="Arrow left" title="Arrow left">&larr;</button>
+        <button class="mobile-key" data-mobile-key="up" type="button" tabindex="-1" aria-label="Arrow up" title="Arrow up">&uarr;</button>
+        <button class="mobile-key" data-mobile-key="down" type="button" tabindex="-1" aria-label="Arrow down" title="Arrow down">&darr;</button>
+        <button class="mobile-key" data-mobile-key="right" type="button" tabindex="-1" aria-label="Arrow right" title="Arrow right">&rarr;</button>
+      </div>
+      <button class="mobile-keydock-toggle" id="mobile-keydock-toggle" type="button" tabindex="-1" aria-label="Show mobile terminal keys" aria-expanded="false" title="Show or hide keys"></button>
+    </div>
+    <div class="terminal-wrap">
+      <div id="screen" aria-label="terminal output"></div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const screen = document.getElementById('screen');
+      const status = document.getElementById('status');
+      const statusLabel = document.getElementById('status-label');
+      const pinToggle = document.getElementById('pin-toggle');
+      const hostBgPicker = document.getElementById('host-bg-picker');
+      const cwdBgPicker = document.getElementById('cwd-bg-picker');
+      const hostLabelValue = document.getElementById('host-label-value');
+      const cwdLabelValue = document.getElementById('cwd-label-value');
+      const mobileKeydock = document.getElementById('mobile-keydock');
+      const mobileKeydockToggle = document.getElementById('mobile-keydock-toggle');
+      const mobileKeys = Array.from(document.querySelectorAll('[data-mobile-key]'));
+      const mobileControlsQuery = window.matchMedia('(hover: none) and (pointer: coarse)');
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const defaultTerminalBg = '#0b0f14';
+      const defaultTerminalFg = '#d7e4ef';
+      const terminalPath = location.pathname.replace(/\/ws$/, '').replace(/\/?$/, '/');
+      const hostName = hostLabelValue?.textContent || 'localhost';
+      const workspacePath = cwdLabelValue?.textContent || terminalPath;
+      const terminalBgKey = `clawlab-tty-background:${terminalPath}`;
+      const hostBgKey = `clawlab-tty-host-background:${hostName}`;
+      const lookURL = '/tty/look';
+      const mobileKeyInput = {
+        'ctrl-a': '\x01',
+        'ctrl-c': '\x03',
+        'ctrl-u': '\x15',
+        tab: '\x09',
+        escape: '\x1b',
+        'page-up': '\x1b[5~',
+        'page-down': '\x1b[6~',
+        left: '\x1b[D',
+        up: '\x1b[A',
+        down: '\x1b[B',
+        right: '\x1b[C',
+      };
+      function setStatus(value) {
+        status.classList.remove('is-connected', 'is-closed', 'is-error');
+        if (value === 'connected') {
+          status.classList.add('is-connected');
+        } else if (value === 'closed') {
+          status.classList.add('is-closed');
+        } else if (value === 'error') {
+          status.classList.add('is-error');
+        }
+        statusLabel.textContent = value;
+      }
+      function setPinned(value) {
+        pinToggle?.classList.toggle('is-pinned', value);
+        pinToggle?.setAttribute('aria-pressed', value ? 'true' : 'false');
+        pinToggle?.setAttribute('aria-label', value ? 'Unpin terminal session' : 'Pin terminal session');
+        pinToggle?.setAttribute('title', value ? 'Unpin terminal session' : 'Pin terminal session');
+      }
+      if (typeof Terminal === 'undefined') {
+        setStatus('error');
+        screen.textContent = 'terminal renderer failed to load';
+        return;
+      }
+      const term = new Terminal({
+        cursorBlink: true,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontSize: 14,
+        allowTransparency: true,
+        convertEol: false,
+        scrollback: 4000,
+        theme: {
+          background: localStorage.getItem(terminalBgKey) || localStorage.getItem(hostBgKey) || defaultTerminalBg,
+          foreground: defaultTerminalFg,
+          cursor: '#7dd3fc',
+          selectionBackground: 'rgba(125, 211, 252, 0.25)',
+        },
+      });
+
+      function applyTerminalTheme() {
+        const hostBackground = localStorage.getItem(hostBgKey) || defaultTerminalBg;
+        const background = localStorage.getItem(terminalBgKey) || hostBackground;
+        document.documentElement.style.setProperty('--terminal-bg', background);
+        if (hostBgPicker) hostBgPicker.value = hostBackground;
+        if (cwdBgPicker) cwdBgPicker.value = background;
+        term.options.theme = {
+          ...term.options.theme,
+          background,
+          foreground: defaultTerminalFg,
+        };
+        term.refresh(0, Math.max(0, term.rows - 1));
+      }
+
+      hostBgPicker?.addEventListener('input', (event) => {
+        const background = event.target.value;
+        localStorage.setItem(hostBgKey, background);
+        applyTerminalTheme();
+        saveLook({ terminalBgByHost: { [hostName]: background } });
+      });
+
+      cwdBgPicker?.addEventListener('input', (event) => {
+        const background = event.target.value;
+        localStorage.setItem(terminalBgKey, background);
+        applyTerminalTheme();
+        saveLook({ terminalBgByPath: { [workspacePath]: background } });
+      });
+
+      hostBgPicker?.closest('.label')?.addEventListener('click', (event) => {
+        if (!event.altKey && !mobileAltActive) return;
+        event.preventDefault();
+        setMobileAltActive(false);
+        localStorage.removeItem(hostBgKey);
+        applyTerminalTheme();
+        saveLook({ terminalBgByHost: { [hostName]: null } });
+      });
+
+      cwdBgPicker?.closest('.label')?.addEventListener('click', (event) => {
+        if (!event.altKey && !mobileAltActive) return;
+        event.preventDefault();
+        setMobileAltActive(false);
+        localStorage.removeItem(terminalBgKey);
+        applyTerminalTheme();
+        saveLook({ terminalBgByPath: { [workspacePath]: null } });
+      });
+      applyTerminalTheme();
+
+      function saveLook(update) {
+        fetch(lookURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(update),
+          cache: 'no-store',
+        }).catch(() => {});
+      }
+
+      fetch(lookURL, { cache: 'no-store' })
+        .then((response) => response.ok ? response.json() : null)
+        .then((look) => {
+          const hostBackground = look?.terminalBgByHost?.[hostName];
+          const pathBackground = look?.terminalBgByPath?.[workspacePath];
+          if (hostBackground) {
+            localStorage.setItem(hostBgKey, hostBackground);
+          }
+          if (pathBackground) {
+            localStorage.setItem(terminalBgKey, pathBackground);
+          }
+          applyTerminalTheme();
+        })
+        .catch(() => {});
+
+      function bytesToBase64(bytes) {
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      function base64ToBytes(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      }
+
+      function measureTerminalSize() {
+        const cell = term?._core?._renderService?.dimensions?.css?.cell;
+        let cellWidth = Number(cell?.width);
+        let cellHeight = Number(cell?.height);
+        if (!cellWidth || !cellHeight) {
+          const probe = document.createElement('span');
+          probe.textContent = 'M';
+          probe.style.position = 'absolute';
+          probe.style.visibility = 'hidden';
+          probe.style.font = getComputedStyle(screen).font;
+          document.body.appendChild(probe);
+          const metrics = probe.getBoundingClientRect();
+          probe.remove();
+          cellWidth = metrics.width || 8;
+          cellHeight = metrics.height || 16;
+        }
+        const styles = getComputedStyle(screen);
+        const padding = parseFloat(styles.getPropertyValue('--terminal-padding')) || 0;
+        const availableWidth = Math.max(0, screen.clientWidth - (padding * 2));
+        const availableHeight = Math.max(0, screen.clientHeight - (padding * 2));
+        const cols = Math.max(20, Math.floor(availableWidth / Math.max(cellWidth, 1)));
+        const rows = Math.max(8, Math.floor(availableHeight / Math.max(cellHeight, 1)));
+        return { cols, rows };
+      }
+
+      function fitTerminal() {
+        const { cols, rows } = measureTerminalSize();
+        term.resize(cols, rows);
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      }
+
+      function sendInput(value) {
+        if (!value || !socket || socket.readyState !== WebSocket.OPEN) return;
+        socket.send(JSON.stringify({ type: 'input', data: bytesToBase64(encoder.encode(value)) }));
+      }
+
+      function scrollTerminalToBottom() {
+        term.scrollToBottom();
+        const viewport = screen.querySelector('.xterm-viewport');
+        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+        screen.scrollTop = screen.scrollHeight;
+        term.focus();
+      }
+
+      pinToggle?.addEventListener('click', () => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const pinned = pinToggle.classList.contains('is-pinned');
+        socket.send(JSON.stringify({ type: pinned ? 'unpin' : 'pin' }));
+      });
+
+      status?.addEventListener('click', scrollTerminalToBottom);
+
+      function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+      }
+
+      function placeMobileKeydock(top) {
+        if (!mobileKeydock) return;
+      const margin = 8;
+      const rect = mobileKeydock.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const viewportTop = viewport?.offsetTop || 0;
+        const viewportHeight = viewport?.height || window.innerHeight;
+      const minTop = viewportTop + margin;
+      const maxTop = Math.max(minTop, viewportTop + viewportHeight - rect.height - margin);
+      mobileKeydock.style.left = mobileKeydock.classList.contains('is-collapsed') ? 'auto' : `${margin}px`;
+      mobileKeydock.style.right = `${margin}px`;
+      mobileKeydock.style.top = `${clamp(top, minTop, maxTop)}px`;
+      }
+
+      function syncMobileKeydockToggle() {
+        const collapsed = Boolean(mobileKeydock?.classList.contains('is-collapsed'));
+        mobileKeydockToggle?.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        mobileKeydockToggle?.setAttribute('aria-label', collapsed ? 'Show mobile terminal keys' : 'Hide mobile terminal keys');
+      }
+
+      let mobileAltActive = false;
+      function setMobileAltActive(active) {
+        mobileAltActive = active;
+        document.documentElement.classList.toggle('mobile-alt-active', active);
+        const button = document.querySelector('[data-mobile-key="alt"]');
+        button?.classList.toggle('is-active', active);
+        button?.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+
+      function mobileKeyboardOpen() {
+        const viewportHeight = window.visualViewport?.height || window.innerHeight;
+        const layoutHeight = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
+        return mobileControlsQuery.matches && layoutHeight - viewportHeight > 120;
+      }
+
+      function updateMobileKeydockVisibility() {
+        const keyboardOpen = mobileKeyboardOpen();
+        document.documentElement.classList.toggle('is-keyboard-open', keyboardOpen);
+        if (!mobileControlsQuery.matches || !mobileKeydock) return;
+        requestAnimationFrame(() => {
+          const rect = mobileKeydock.getBoundingClientRect();
+          const viewport = window.visualViewport;
+          const viewportTop = viewport?.offsetTop || 0;
+          const viewportHeight = viewport?.height || window.innerHeight;
+          const top = keyboardOpen
+            ? viewportTop + viewportHeight - rect.height - 10
+            : viewportTop + (viewportHeight * 0.5);
+          placeMobileKeydock(top);
+        });
+      }
+
+      window.addEventListener('resize', () => {
+        updateMobileKeydockVisibility();
+        if (!mobileKeydock || !document.documentElement.classList.contains('is-keyboard-open')) return;
+        const rect = mobileKeydock.getBoundingClientRect();
+        placeMobileKeydock(rect.top);
+      });
+      window.visualViewport?.addEventListener('resize', updateMobileKeydockVisibility);
+      window.visualViewport?.addEventListener('scroll', updateMobileKeydockVisibility);
+      mobileControlsQuery.addEventListener?.('change', updateMobileKeydockVisibility);
+      document.addEventListener('focusin', () => setTimeout(updateMobileKeydockVisibility, 250));
+      document.addEventListener('focusout', () => setTimeout(updateMobileKeydockVisibility, 250));
+
+      mobileKeydockToggle?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+      });
+
+      mobileKeydockToggle?.addEventListener('click', (event) => {
+        event.preventDefault();
+        mobileKeydock?.classList.toggle('is-collapsed');
+        syncMobileKeydockToggle();
+        if (mobileKeydock) {
+          const rect = mobileKeydock.getBoundingClientRect();
+          placeMobileKeydock(rect.top);
+        }
+      });
+
+      mobileKeys.forEach((button) => {
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+        });
+        button.addEventListener('pointerup', (event) => {
+          event.preventDefault();
+          if (button.dataset.mobileKey === 'alt') {
+            setMobileAltActive(!mobileAltActive);
+            return;
+          }
+          sendInput(mobileKeyInput[button.dataset.mobileKey]);
+        });
+      });
+
+      term.open(screen);
+
+      let socket = null;
+      let connectTimer = null;
+
+      term.onData(sendInput);
+      term.onResize(({ cols, rows }) => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      });
+
+      function connect() {
+        const wsUrl = new URL('ws', window.location.href);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        const initialSize = measureTerminalSize();
+        wsUrl.searchParams.set('cols', String(initialSize.cols));
+        wsUrl.searchParams.set('rows', String(initialSize.rows));
+        socket = new WebSocket(wsUrl);
+        socket.onopen = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('connected');
+          term.focus();
+          fitTerminal();
+        };
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'output' && typeof message.data === 'string') {
+              term.write(decoder.decode(base64ToBytes(message.data), { stream: true }));
+            } else if (message.type === 'session') {
+              setPinned(Boolean(message.pinned));
+            }
+          } catch (error) {
+            term.write(String(event.data));
+          }
+        };
+        socket.onclose = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('closed');
+        };
+        socket.onerror = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('error');
+        };
+        connectTimer = setTimeout(() => {
+          if (socket && socket.readyState === WebSocket.CONNECTING) {
+            setStatus('error');
+          }
+        }, 5000);
+      }
+
+      window.addEventListener('resize', fitTerminal);
+      window.addEventListener('focus', () => term.focus());
+      screen.addEventListener('click', () => {
+        if (mobileControlsQuery.matches && document.documentElement.classList.contains('is-keyboard-open')) return;
+        term.focus();
+      });
+      function dismissMobileKeyboard(event) {
+        if (!mobileControlsQuery.matches || !document.documentElement.classList.contains('is-keyboard-open')) return;
+        if (event.target.closest('.mobile-keydock, .topbar')) return;
+        term.blur();
+      }
+      window.addEventListener('click', dismissMobileKeyboard);
+      let longPressTimer = null;
+      window.addEventListener('pointerdown', (event) => {
+        if (!mobileControlsQuery.matches) return;
+        if (event.target.closest('.mobile-keydock, .topbar')) return;
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (document.documentElement.classList.contains('is-keyboard-open')) term.blur();
+        }, 500);
+      }, { passive: true });
+      window.addEventListener('pointermove', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      }, { passive: true });
+      window.addEventListener('pointerup', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      }, { passive: true });
+      window.addEventListener('error', () => {
+        setStatus('error');
+      });
+      window.addEventListener('unhandledrejection', () => {
+        setStatus('error');
+      });
+
+      connect();
+      fitTerminal();
+      term.focus();
+    })();
+  </script>
+</body>
+</html>

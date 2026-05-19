@@ -73,6 +73,7 @@ agents/**/*.db*
 config/custom/host/.env
 config/custom/env/*.env
 config/custom/env/**/*.env
+config/custom/override/**/dash-tty.env
 infra/generated/
 state/
 

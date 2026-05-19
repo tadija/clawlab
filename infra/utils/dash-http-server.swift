@@ -13,8 +13,69 @@ struct Config {
     let port: UInt16
 }
 
+final class DashPageCache {
+    private let repoRoot: String
+    private let refreshInterval: TimeInterval
+    private let lock = NSLock()
+    private var html: Data?
+    private var lastRefresh = Date.distantPast
+    private var refreshInFlight = false
+
+    init(repoRoot: String, refreshInterval: TimeInterval = 2.0) {
+        self.repoRoot = repoRoot
+        self.refreshInterval = refreshInterval
+        self.html = loadDashHTML(repoRoot: repoRoot)
+    }
+
+    func page() -> (html: Data?, renderError: String?) {
+        lock.lock()
+        let cached = html
+        let shouldRefresh = Date().timeIntervalSince(lastRefresh) >= refreshInterval && !refreshInFlight
+        if shouldRefresh {
+            refreshInFlight = true
+            lastRefresh = Date()
+        }
+        lock.unlock()
+
+        if cached == nil {
+            let result = renderDash(repoRoot: repoRoot)
+            guard result.status == 0 else {
+                finishRefresh(html: nil)
+                return (nil, result.output)
+            }
+            let rendered = loadDashHTML(repoRoot: repoRoot)
+            finishRefresh(html: rendered)
+            return (rendered, nil)
+        }
+
+        if shouldRefresh {
+            DispatchQueue.global(qos: .utility).async { [repoRoot] in
+                let result = renderDash(repoRoot: repoRoot)
+                self.finishRefresh(html: result.status == 0 ? loadDashHTML(repoRoot: repoRoot) : nil)
+            }
+        }
+
+        return (cached, nil)
+    }
+
+    private func finishRefresh(html rendered: Data?) {
+        lock.lock()
+        if let rendered {
+            html = rendered
+        }
+        refreshInFlight = false
+        lock.unlock()
+    }
+}
+
+struct HTTPRequest {
+    let method: String
+    let path: String
+    let headers: [String: String]
+}
+
 func usage() -> Never {
-    fputs("usage: dash-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 2108]\n", stderr)
+    fputs("usage: dash-http-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 2108]\n", stderr)
     exit(1)
 }
 
@@ -132,6 +193,28 @@ func loadDashHTML(repoRoot: String) -> Data? {
     return FileManager.default.contents(atPath: path)
 }
 
+func localHostName() -> String {
+    var buffer = [CChar](repeating: 0, count: 256)
+    if gethostname(&buffer, buffer.count) == 0 {
+        let name = String(cString: buffer)
+        if let shortName = name.split(separator: ".").first, !shortName.isEmpty {
+            return String(shortName)
+        }
+        return name
+    }
+    return "localhost"
+}
+
+func redirectHostName(headers: [String: String]) -> String {
+    if let hostHeader = headers["host"] {
+        let host = hostHeader.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init)
+        if let host, !host.isEmpty {
+            return host
+        }
+    }
+    return localHostName()
+}
+
 func sendAll(fd: Int32, data: Data) {
     data.withUnsafeBytes { rawBuffer in
         guard let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
@@ -160,7 +243,24 @@ func response(status: String, contentType: String, body: Data, headOnly: Bool = 
     return data
 }
 
-func handleConnection(fd: Int32, config: Config) {
+func redirectResponse(location: String, headOnly: Bool = false) -> Data {
+    let body = Data("redirecting\n".utf8)
+    var headers = "HTTP/1.1 302 Found\r\n"
+    headers += "Location: \(location)\r\n"
+    headers += "Content-Type: text/plain; charset=utf-8\r\n"
+    headers += "Cache-Control: no-store\r\n"
+    headers += "Content-Length: \(body.count)\r\n"
+    headers += "Connection: close\r\n"
+    headers += "\r\n"
+
+    var data = Data(headers.utf8)
+    if !headOnly {
+        data.append(body)
+    }
+    return data
+}
+
+func handleConnection(fd: Int32, config: Config, dashPageCache: DashPageCache) {
     defer { close(fd) }
 
     var buffer = [UInt8](repeating: 0, count: 8192)
@@ -168,7 +268,17 @@ func handleConnection(fd: Int32, config: Config) {
     guard count > 0 else { return }
 
     let request = String(decoding: buffer.prefix(Int(count)), as: UTF8.self)
-    guard let line = request.split(separator: "\r\n", omittingEmptySubsequences: false).first else { return }
+    let requestLines = request.split(separator: "\r\n", omittingEmptySubsequences: false)
+    guard let line = requestLines.first else { return }
+
+    var headers: [String: String] = [:]
+    for line in requestLines.dropFirst() {
+        if line.isEmpty { break }
+        guard let colonIndex = line.firstIndex(of: ":") else { continue }
+        let key = line[..<colonIndex].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let value = line[line.index(after: colonIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        headers[key] = value
+    }
 
     let parts = line.split(separator: " ")
     guard parts.count >= 2 else {
@@ -190,19 +300,20 @@ func handleConnection(fd: Int32, config: Config) {
         return
     }
 
+    if rawPath == "/tty" {
+        sendAll(fd: fd, data: redirectResponse(location: "/tty/", headOnly: headOnly))
+        return
+    }
+
     guard rawPath == "/" || rawPath == "/index.html" else {
         sendAll(fd: fd, data: response(status: "404 Not Found", contentType: "text/plain; charset=utf-8", body: Data("not found\n".utf8), headOnly: headOnly))
         return
     }
 
-    let renderResult = renderDash(repoRoot: config.repoRoot)
-    guard renderResult.status == 0 else {
-        sendAll(fd: fd, data: response(status: "500 Internal Server Error", contentType: "text/plain; charset=utf-8", body: Data(renderResult.output.utf8), headOnly: headOnly))
-        return
-    }
-
-    guard let html = loadDashHTML(repoRoot: config.repoRoot) else {
-        sendAll(fd: fd, data: response(status: "500 Internal Server Error", contentType: "text/plain; charset=utf-8", body: Data("dash page not found\n".utf8), headOnly: headOnly))
+    let page = dashPageCache.page()
+    guard let html = page.html else {
+        let message = page.renderError ?? "dash page not found\n"
+        sendAll(fd: fd, data: response(status: "500 Internal Server Error", contentType: "text/plain; charset=utf-8", body: Data(message.utf8), headOnly: headOnly))
         return
     }
 
@@ -210,6 +321,7 @@ func handleConnection(fd: Int32, config: Config) {
 }
 
 let config = parseArgs()
+let dashPageCache = DashPageCache(repoRoot: config.repoRoot)
 let serverFD = makeServerSocket(host: config.host, port: config.port)
 
 while true {
@@ -219,5 +331,5 @@ while true {
         perror("accept")
         continue
     }
-    handleConnection(fd: clientFD, config: config)
+    handleConnection(fd: clientFD, config: config, dashPageCache: dashPageCache)
 }

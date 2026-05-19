@@ -37,6 +37,8 @@
       --status-running-text: #7ef0da;
       --status-configured-bg: #4a3412;
       --status-configured-text: #ffd98a;
+      --status-interactive-bg: #1d3b52;
+      --status-interactive-text: #9cd6ff;
       --status-unavailable-bg: #4a1f26;
       --status-unavailable-text: #ffb6c1;
       --status-unknown-bg: #313942;
@@ -47,21 +49,30 @@
       --status-running-text: #065f46;
       --status-configured-bg: #fef3c7;
       --status-configured-text: #92400e;
+      --status-interactive-bg: #dbeafe;
+      --status-interactive-text: #1d4ed8;
       --status-unavailable-bg: #fee2e2;
       --status-unavailable-text: #991b1b;
       --status-unknown-bg: #e5e7eb;
       --status-unknown-text: #374151;
     }
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); transition: background-color 180ms ease, color 180ms ease; }
     main { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
     .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-    .host-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
+    .host-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+    .host-block { margin: 0 0 16px; }
+    .host-row { margin: 0; }
+    .host-row p { display: inline-flex; align-items: center; gap: 4px; margin: 0; min-height: 24px; }
+    .host-terminals { margin-top: 12px; }
+    .host-terminals[hidden] { display: none; }
+    .host-terminals.is-collapsed ul { display: none; }
     h1 { margin: 0 0 8px; font-size: 2rem; }
     .title-link { color: inherit; font-weight: inherit; text-decoration: none; }
     .title-link:hover { color: var(--accent); text-decoration: none; }
     .title-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
     p { margin: 0 0 16px; }
-    .meta { color: var(--muted); margin-top: 28px; display: grid; gap: 4px; }
+    .meta { color: var(--muted); margin-top: 28px; display: grid; gap: 4px; font-size: 1rem; }
     .meta p { margin: 0; }
     .dashboard-section { margin-top: 24px; }
     .dashboard-section h2 { margin: 0 0 12px; font-size: 0.95rem; line-height: 1.2; }
@@ -73,58 +84,133 @@
     .dashboard-section.is-collapsed ul { display: none; }
     ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
     li { padding: 14px 16px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; transition: background-color 180ms ease, border-color 180ms ease; }
+    .dashboard-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: center; }
+    .row-main { min-width: 0; display: grid; gap: 6px; }
+    .row-title { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; line-height: 1.2; }
+    .row-title > a, .row-title > .item-name { min-width: 0; overflow-wrap: anywhere; font-size: 1.08rem; }
+    .row-details { color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: 0.9rem; }
+    .row-details:empty { display: none; }
+    .row-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; }
     a { color: var(--accent); text-decoration: none; font-weight: 600; }
     a:hover { text-decoration: underline; }
+    .host-link { font-weight: 400; }
     .item-name { color: var(--text); font-weight: 600; }
-    small { color: var(--muted); margin-left: 8px; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    small { color: var(--muted); margin-left: 8px; display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
     code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; transition: background-color 180ms ease; }
-    .tailscale-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 24px; }
-    .segmented { display: inline-flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: var(--control-bg); border-radius: 999px; margin: 0; transition: background-color 180ms ease; }
-    .segmented-link { padding: 7px 14px; border-radius: 999px; color: var(--muted); font-weight: 600; transition: background-color 180ms ease, color 180ms ease; }
+    .tailscale-row { display: grid; gap: 0; margin: 0 0 24px; max-width: 100%; min-width: 0; }
+    .tailscale-row.has-sessions-open .segmented-shell { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .segmented-shell { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 10px 6px; background: var(--control-bg); border-radius: 12px; margin: 0; transition: background-color 180ms ease; }
+    .segmented { display: flex; min-width: 0; max-width: 100%; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin: 0; -webkit-overflow-scrolling: touch; }
+    .segmented::-webkit-scrollbar { display: none; }
+    .segmented-link { flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; color: var(--muted); font-weight: 600; white-space: nowrap; transition: background-color 180ms ease, color 180ms ease; }
     .segmented-link:hover { text-decoration: none; color: var(--control-hover-text); background: var(--control-hover-bg); }
     .segmented-link.is-active { background: var(--control-active-bg); color: var(--control-active-text); }
-    .tint-trigger { position: relative; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; }
+    .segmented-link[hidden] { display: none; }
+    .tint-trigger { position: relative; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
     .segment-label { position: relative; z-index: 1; pointer-events: none; }
     .segment-tint-picker { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
     .segment-tint-picker::-webkit-color-swatch-wrapper { padding: 0; }
     .segment-tint-picker::-webkit-color-swatch { border: 0; }
     .segment-tint-picker::-moz-color-swatch { border: 0; }
     .controls { display: inline-flex; align-items: center; gap: 8px; }
-    .icon-button { appearance: none; border: 1px solid var(--panel-border); background: var(--panel); color: var(--text); width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease; }
-    .icon-button:hover { transform: translateY(-1px); }
+    .icon-button { appearance: none; border: 1px solid var(--panel-border); background: var(--panel); color: var(--text); width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; font-weight: 600; line-height: 1; text-decoration: none; transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease, color 180ms ease, opacity 180ms ease; }
+    .icon-button:hover { transform: translateY(-1px); text-decoration: none; }
     .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .icon-button.is-active { background: var(--control-active-bg); color: var(--control-active-text); border-color: color-mix(in srgb, var(--control-active-bg) 65%, var(--panel-border)); }
-    .icon-svg { width: 16px; height: 16px; display: block; fill: currentColor; }
-    .status-running, .status-configured, .status-unavailable, .status-unknown { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .icon-button.is-muted { background: transparent; border-color: transparent; color: var(--muted); opacity: 0.78; }
+    .icon-button.is-muted:hover { color: var(--accent); opacity: 1; background: transparent; }
+    .icon-svg { width: 24px; height: 24px; display: block; fill: none; }
+    .row-action-button { width: 24px; height: 24px; }
+    .row-action-button[hidden] { display: none; }
+    .row-action-button:hover {
+      transform: none;
+      background: var(--control-active-bg);
+      border-color: var(--control-active-bg);
+      color: var(--control-active-text);
+      opacity: 1;
+    }
+    .row-action-button:hover .icon-svg { fill: none; }
+    .row-action-button .icon-svg { width: 14px; height: 14px; }
+    .segmented-action-button { align-self: center; margin-left: 2px; }
+    .host-tint-circle { background: transparent; border-color: transparent; }
+    .host-tint-circle:hover { transform: none; background: transparent; border-color: transparent; opacity: 1; }
+    .host-tint-mark { width: 24px; height: 24px; border: 3px solid var(--accent); border-radius: 999px; background: transparent; pointer-events: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+    .host-tint-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
+    .row-action-button.is-active:not(.host-tint-circle) { background: color-mix(in srgb, var(--control-active-bg) 22%, transparent); color: var(--control-active-bg); border-color: transparent; }
+    .row-action-button.is-active:not(.host-tint-circle):hover { transform: none; background: var(--control-active-bg); border-color: var(--control-active-bg); color: var(--control-active-text); opacity: 1; }
+    .host-sessions-panel { background: var(--control-bg); border-radius: 0 0 12px 12px; padding: 10px 6px 10px; transition: background-color 180ms ease; }
+    .host-sessions-panel[hidden], .host-sessions-panel.is-collapsed { display: none; }
+    .host-sessions-panel ul { gap: 6px; }
+    .host-sessions-panel li { border-radius: 14px; }
+    .terminal-quick-action { vertical-align: middle; margin-left: 2px; }
+    .action-menu { position: relative; display: inline-flex; }
+    .action-menu > summary { list-style: none; }
+    .action-menu > summary::-webkit-details-marker { display: none; }
+    .action-menu-panel { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; min-width: 180px; padding: 6px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18); display: grid; gap: 2px; }
+    .host-action-menu .action-menu-panel { min-width: 180px; max-width: min(260px, calc(100vw - 48px)); }
+    .host-action-menu .action-menu-heading { padding-top: 4px; }
+    .host-action-menu .action-menu-item { overflow: hidden; text-overflow: ellipsis; }
+    .action-menu-section { display: grid; gap: 2px; }
+    .action-menu-section + .action-menu-section { border-top: 1px solid var(--panel-border); margin-top: 4px; padding-top: 4px; }
+    .action-menu-heading { color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.2; padding: 5px 8px 3px; text-transform: uppercase; }
+    .action-menu-item { color: var(--text); font-weight: 600; padding: 7px 8px; border-radius: 6px; white-space: nowrap; }
+    .action-menu-item-numbered { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: center; }
+    .terminal-number { width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--control-active-bg) 22%, transparent); color: var(--control-active-bg); font-size: 0.78rem; line-height: 1; font-weight: 800; }
+    .action-menu-item:hover { background: var(--control-bg); text-decoration: none; color: var(--accent); }
+    .action-menu-item:hover .terminal-number { background: var(--accent); color: var(--control-active-text); }
+    .status-running, .status-configured, .status-interactive, .status-unavailable, .status-unknown { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; line-height: 1.25; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
     .status-running { background: var(--status-running-bg); color: var(--status-running-text); }
     .status-configured { background: var(--status-configured-bg); color: var(--status-configured-text); }
+    .status-interactive { background: var(--status-interactive-bg); color: var(--status-interactive-text); }
     .status-unavailable { background: var(--status-unavailable-bg); color: var(--status-unavailable-text); }
     .status-unknown { background: var(--status-unknown-bg); color: var(--status-unknown-text); }
     @media (max-width: 640px) {
-    .topbar { flex-direction: column; }
-    .controls { align-self: flex-end; }
+    .topbar { align-items: flex-start; }
+    .controls { align-self: flex-start; margin-left: auto; }
     }
   </style>
 </head>
 <body>
   <main>
     <div class="topbar">
-      <h1><a class="title-link" id="reset-look" href="" aria-label="Reset page look" title="Reset page look">clawlab</a></h1>
+      <h1><a class="title-link" href="/" aria-label="Open dashboard">clawlab</a></h1>
       <div class="controls">
         <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle light and dark mode" title="Toggle light and dark mode">◐</button>
       </div>
     </div>
-    <div class="host-row">
-      <p>Host: <code>__HOST_NAME__</code></p>
+    <div class="host-block">
+      <div class="host-row">
+        <p><label class="tint-trigger icon-button row-action-button host-tint-circle" title="Change accent tint for this host" aria-label="Change accent tint for this host"><span class="host-tint-mark" aria-hidden="true"><span class="host-tint-dot"></span></span><input class="segment-tint-picker" id="active-tint-picker" type="color" value="#0f766e" data-host="__HOST_NAME__" aria-label="Choose accent tint for this host"></label> <code>__HOST_NAME__</code></p>
+        <details class="action-menu host-action-menu" id="host-terminal-menu">
+          <summary class="icon-button row-action-button" aria-label="Open host terminal menu" title="Open terminal">
+            <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          </summary>
+          <div class="action-menu-panel" id="host-terminal-menu-panel">
+            <div class="action-menu-section">
+              <a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">New host shell</a>
+            </div>
+          </div>
+        </details>
+      </div>
     </div>
+    <div class="action-menu-heading">Hosts</div>
     <div class="tailscale-row">
-      <div class="segmented">
+      <div class="segmented-shell">
+        <div class="segmented">
 __TAILSCALE_NAV_HTML__
+        </div>
+        <button class="icon-button row-action-button segmented-action-button" id="host-terminals-toggle" type="button" aria-expanded="true" aria-controls="pinned-sessions-list" aria-label="Show sessions" title="Show sessions" hidden>
+          <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+      <div class="host-sessions-panel" id="pinned-sessions-section" data-section="pinned-sessions" hidden>
+        <div class="action-menu-heading">Sessions</div>
+        <ul id="pinned-sessions-list"></ul>
       </div>
     </div>
 __AGENT_LINKS_HTML__
     <div class="meta">
-      <p>Generated at <code>__GENERATED_AT__</code>.</p>
+      <p><a id="reset-look" href="" aria-label="Reset page look" title="Reset page look">Generated at</a> <code>__GENERATED_AT__</code>.</p>
     </div>
   </main>
   <script>
@@ -134,12 +220,49 @@ __AGENT_LINKS_HTML__
       const tintPicker = document.getElementById('active-tint-picker');
       const resetLook = document.getElementById('reset-look');
       const sections = Array.from(document.querySelectorAll('.dashboard-section'));
+      const actionMenus = Array.from(document.querySelectorAll('.action-menu'));
+      const tailscaleRow = document.querySelector('.tailscale-row');
+      const hostList = document.querySelector('.segmented');
+      const pinnedSection = document.getElementById('pinned-sessions-section');
+      const pinnedList = document.getElementById('pinned-sessions-list');
+      const hostTerminalsToggle = document.getElementById('host-terminals-toggle');
+      const hostTerminalMenuPanel = document.getElementById('host-terminal-menu-panel');
+      let terminalShortcutTargets = [];
       const themeKey = 'theme';
       const tintKey = 'clawlab-tint';
+      const lookURL = '/tty/look';
+      const activeHost = tintPicker?.dataset.host || '';
       const sectionKeyPrefix = 'clawlab-section-collapsed:';
       const storedTheme = localStorage.getItem(themeKey);
       const storedTint = localStorage.getItem(tintKey);
       const currentDefaultTint = () => getComputedStyle(root).getPropertyValue('--accent-default').trim() || '#0f766e';
+      const scrollActiveHostIntoView = () => {
+        const activeLink = hostList?.querySelector('.segmented-link.is-active');
+        if (!activeLink || !hostList) return;
+        const linkRect = activeLink.getBoundingClientRect();
+        const containerRect = hostList.getBoundingClientRect();
+        const linkLeft = linkRect.left - containerRect.left + hostList.scrollLeft;
+        const containerWidth = containerRect.width;
+        const maxScroll = hostList.scrollWidth - containerWidth;
+        const centeredLeft = linkLeft - (containerWidth - linkRect.width) / 2;
+        hostList.scrollLeft = Math.min(Math.max(0, centeredLeft), maxScroll);
+      };
+      const syncSessionsToggle = () => {
+        if (!hostTerminalsToggle || !pinnedSection) return;
+        const collapsed = pinnedSection.classList.contains('is-collapsed');
+        const title = collapsed ? 'Show sessions' : 'Hide sessions';
+        hostTerminalsToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        hostTerminalsToggle.setAttribute('aria-label', title);
+        hostTerminalsToggle.setAttribute('title', title);
+        tailscaleRow?.classList.toggle('has-sessions-open', !collapsed && !pinnedSection.hidden);
+      };
+      const applyTint = (value) => {
+        root.style.setProperty('--accent', value);
+        if (tintPicker) {
+          tintPicker.value = value;
+        }
+        localStorage.setItem(tintKey, value);
+      };
       const resetTint = () => {
         root.dataset.theme = 'light';
         localStorage.setItem(themeKey, 'light');
@@ -148,17 +271,27 @@ __AGENT_LINKS_HTML__
           tintPicker.value = currentDefaultTint();
         }
         localStorage.removeItem(tintKey);
+        if (activeHost) {
+          saveLook({ tintByHost: { [activeHost]: null } });
+        }
       };
 
       if (storedTheme === 'dark' || storedTheme === 'light') {
         root.dataset.theme = storedTheme;
       }
       if (storedTint && tintPicker) {
-        root.style.setProperty('--accent', storedTint);
-        tintPicker.value = storedTint;
+        applyTint(storedTint);
       } else if (tintPicker) {
         tintPicker.value = currentDefaultTint();
       }
+      requestAnimationFrame(scrollActiveHostIntoView);
+      let lastResizeWidth = window.innerWidth;
+      window.addEventListener('resize', () => {
+        if (window.innerWidth !== lastResizeWidth) {
+          lastResizeWidth = window.innerWidth;
+          scrollActiveHostIntoView();
+        }
+      });
 
       themeToggle?.addEventListener('click', () => {
         const nextTheme = root.dataset.theme === 'dark' ? 'light' : 'dark';
@@ -176,9 +309,38 @@ __AGENT_LINKS_HTML__
 
       tintPicker?.addEventListener('input', (event) => {
         const value = event.target.value;
-        root.style.setProperty('--accent', value);
-        localStorage.setItem(tintKey, value);
+        applyTint(value);
+        if (activeHost) {
+          saveLook({ tintByHost: { [activeHost]: value } });
+        }
       });
+
+      tintPicker?.closest('.tint-trigger')?.addEventListener('click', (event) => {
+        if (!event.altKey) return;
+        event.preventDefault();
+        resetTint();
+      });
+
+      function applyLook(look) {
+        const tint = activeHost ? look?.tintByHost?.[activeHost] : null;
+        if (tint && tintPicker) {
+          applyTint(tint);
+        }
+      }
+
+      function saveLook(update) {
+        fetch(lookURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(update),
+          cache: 'no-store',
+        }).catch(() => {});
+      }
+
+      fetch(lookURL, { cache: 'no-store' })
+        .then((response) => response.ok ? response.json() : null)
+        .then((look) => applyLook(look))
+        .catch(() => {});
 
       for (const section of sections) {
         const id = section.dataset.section;
@@ -195,6 +357,189 @@ __AGENT_LINKS_HTML__
           localStorage.setItem(storageKey, String(collapsed));
         });
       }
+
+      if (hostTerminalsToggle && pinnedSection) {
+        const storageKey = `${sectionKeyPrefix}pinned-sessions`;
+        if (localStorage.getItem(storageKey) === 'true') {
+          pinnedSection.classList.add('is-collapsed');
+        }
+        syncSessionsToggle();
+        hostTerminalsToggle.addEventListener('click', () => {
+          const collapsed = pinnedSection.classList.toggle('is-collapsed');
+          syncSessionsToggle();
+          localStorage.setItem(storageKey, String(collapsed));
+        });
+      }
+
+      const closeActionMenus = (except = null) => {
+        for (const menu of actionMenus) {
+          if (menu !== except) {
+            menu.open = false;
+          }
+        }
+      };
+
+      for (const menu of actionMenus) {
+        menu.addEventListener('toggle', () => {
+          if (menu.open) {
+            closeActionMenus(menu);
+          }
+        });
+        menu.addEventListener('click', (event) => {
+          if (event.target.closest('.action-menu-item')) {
+            menu.open = false;
+          }
+        });
+      }
+
+      document.addEventListener('click', (event) => {
+        if (!event.target.closest('.action-menu')) {
+          closeActionMenus();
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeActionMenus();
+          return;
+        }
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+          return;
+        }
+        if (event.target.closest('input, textarea, select, button, a, summary, [contenteditable="true"]')) {
+          return;
+        }
+        if (!/^[1-9]$/.test(event.key)) {
+          return;
+        }
+        const target = terminalShortcutTargets[Number(event.key) - 1];
+        if (!target) {
+          return;
+        }
+        event.preventDefault();
+        window.open(target.path, '_blank', 'noreferrer');
+      });
+
+      const escapeHTML = (value) => String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+
+      const renderTerminalTargets = (payload) => {
+        const pinned = Array.isArray(payload?.labSessions) ? payload.labSessions : [];
+        const tmuxSessions = Array.isArray(payload?.tmuxSessions) ? payload.tmuxSessions : [];
+        const terminalTargets = [
+          ...pinned.map((session) => ({
+            kind: 'clawlab',
+            path: String(session.path || session.key || '/tty/'),
+            label: String(session.projectTitle || session.agentId || session.path || session.key || '/tty/'),
+            clients: Number.isFinite(Number(session.clients)) ? Number(session.clients) : 0,
+            workspace: session.workspace ? String(session.workspace) : '',
+          })),
+          ...tmuxSessions.map((session) => {
+            const name = String(session.name || '');
+            return {
+              kind: 'tmux',
+              path: String(session.path || `/tty/tmux/${encodeURIComponent(name)}/`),
+              label: name,
+              attached: Number.isFinite(Number(session.attached)) ? Number(session.attached) : 0,
+              windows: Number.isFinite(Number(session.windows)) ? Number(session.windows) : 0,
+            };
+          }),
+        ];
+        terminalShortcutTargets = terminalTargets.slice(0, 9);
+        const numberForPath = new Map(terminalTargets.map((target, index) => [target.path, String(index + 1)]));
+        const targetRows = [];
+        document.querySelectorAll('[data-pinned-terminal-action]').forEach((element) => {
+          if (element.dataset.pinnedTerminalGenerated === 'true') {
+            element.remove();
+          } else {
+            element.classList.remove('is-active');
+            element.removeAttribute('data-pinned-terminal-action');
+          }
+        });
+        if (hostTerminalMenuPanel) {
+          const pinnedItems = terminalTargets.filter((target) => target.kind === 'clawlab').map((target) => {
+            const number = numberForPath.get(target.path) || '';
+            return `<a class="action-menu-item action-menu-item-numbered" href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span><span>${escapeHTML(target.label)}</span></a>`;
+          }).join('');
+          const tmuxItems = terminalTargets.filter((target) => target.kind === 'tmux').map((target) => {
+            const number = numberForPath.get(target.path) || '';
+            return `<a class="action-menu-item action-menu-item-numbered" href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span><span>${escapeHTML(target.label)}</span></a>`;
+          }).join('');
+          const sections = [
+            '<div class="action-menu-section"><a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">New host shell</a></div>',
+            pinnedItems ? `<div class="action-menu-section"><div class="action-menu-heading">clawlab</div>${pinnedItems}</div>` : '',
+            tmuxItems ? `<div class="action-menu-section"><div class="action-menu-heading">tmux</div>${tmuxItems}</div>` : '',
+          ].filter(Boolean);
+          hostTerminalMenuPanel.innerHTML = sections.join('');
+        }
+        terminalTargets.forEach((target) => {
+          const number = numberForPath.get(target.path) || '';
+          if (target.kind === 'clawlab') {
+            const workspace = target.workspace ? ` <span class="detail-cwd">cwd: <code>${escapeHTML(target.workspace)}</code></span>` : '';
+            targetRows.push(`<li class="dashboard-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-running">clawlab</span></div><div class="row-details"><span class="detail-clients">clients: <code>${target.clients}</code></span>${workspace}</div></div></li>`);
+            return;
+          }
+          targetRows.push(`<li class="dashboard-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-interactive">tmux</span></div><div class="row-details"><span class="detail-clients">attached: <code>${target.attached}</code></span><span class="detail-windows">windows: <code>${target.windows}</code></span></div></div></li>`);
+        });
+        if (pinnedList) {
+          pinnedList.innerHTML = targetRows.join('');
+        }
+        if (pinnedSection) {
+          pinnedSection.hidden = targetRows.length === 0;
+          tailscaleRow?.classList.toggle('has-sessions-open', targetRows.length > 0 && !pinnedSection.classList.contains('is-collapsed'));
+        }
+        if (hostTerminalsToggle) {
+          hostTerminalsToggle.hidden = targetRows.length === 0;
+          syncSessionsToggle();
+        }
+        const pinnedPaths = new Set(terminalTargets.filter((target) => target.kind === 'clawlab').map((target) => target.path));
+        for (const path of pinnedPaths) {
+          const anchors = Array.from(document.querySelectorAll('a[href]')).filter((anchor) => {
+            const href = anchor.getAttribute('href');
+            return href === path || href === path.replace(/\/$/, '');
+          });
+          for (const anchor of anchors) {
+            const row = anchor.closest('li, .host-row');
+            if (row?.closest('#pinned-sessions-section')) {
+              continue;
+            }
+            const matchingAction = Array.from(row?.querySelectorAll('.row-action-button[href]') || [])
+              .find((element) => {
+                const href = element.getAttribute('href');
+                return href === path || href === path.replace(/\/$/, '');
+              });
+            if (matchingAction) {
+              matchingAction.classList.add('is-active');
+              matchingAction.setAttribute('data-pinned-terminal-action', path);
+              matchingAction.setAttribute('title', 'Reattach pinned terminal');
+              matchingAction.innerHTML = escapeHTML(numberForPath.get(path) || '');
+              continue;
+            }
+            const small = row?.querySelector('small');
+            const target = row?.querySelector('.row-actions') || small || row;
+            if (anchor.classList.contains('row-action-button')) {
+              anchor.classList.add('is-active');
+              anchor.setAttribute('data-pinned-terminal-action', path);
+              anchor.setAttribute('title', 'Reattach pinned terminal');
+              anchor.innerHTML = escapeHTML(numberForPath.get(path) || '');
+              continue;
+            }
+            const exists = Array.from(target?.querySelectorAll('[data-pinned-terminal-action]') || [])
+              .some((element) => element.getAttribute('data-pinned-terminal-action') === path);
+            if (!target || exists) continue;
+            target.insertAdjacentHTML('beforeend', ` <a class="icon-button row-action-button terminal-quick-action is-active" data-pinned-terminal-action="${escapeHTML(path)}" data-pinned-terminal-generated="true" href="${escapeHTML(path)}" target="_blank" rel="noreferrer" aria-label="Reattach pinned terminal" title="Reattach pinned terminal">${escapeHTML(numberForPath.get(path) || '')}</a>`);
+          }
+        }
+        scrollActiveHostIntoView();
+      };
+
+      fetch('/tty/targets', { cache: 'no-store' })
+        .then((response) => response.ok ? response.json() : { labSessions: [], tmuxSessions: [] })
+        .then((payload) => renderTerminalTargets(payload))
+        .catch(() => renderTerminalTargets({ labSessions: [], tmuxSessions: [] }));
     })();
   </script>
 </body>

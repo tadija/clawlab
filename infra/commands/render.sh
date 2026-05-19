@@ -138,13 +138,22 @@ collect_service_packages() {
 collect_agent_packages() {
   local agent_id
   local kind
+  local packages
+  local casks
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
-    kind="$(agent_kind_for_id "$agent_id")"
+    kind="$(known_agent_kind_for_id "$agent_id")" || continue
     load_agent_kind_definition "$kind"
     append_tap_list "${CLAWLAB_AGENT_BREW_TAPS:-}"
-    append_list "${CLAWLAB_AGENT_BREW_PACKAGES:-}"
+    packages="${CLAWLAB_AGENT_BREW_PACKAGES:-}"
+    casks="${CLAWLAB_AGENT_BREW_CASKS:-}"
+    if is_macos && is_arm64; then
+      packages="${CLAWLAB_AGENT_BREW_PACKAGES_MACOS_ARM64:-$packages}"
+      casks="${CLAWLAB_AGENT_BREW_CASKS_MACOS_ARM64:-$casks}"
+    fi
+    append_list "$packages"
+    append_cask_list "$casks"
   done < <(requested_agent_ids_from_env)
 }
 
@@ -231,6 +240,29 @@ html_escape() {
   printf '%s' "$value"
 }
 
+url_encode_path_segment() {
+  local value="$1"
+  local length="${#value}"
+  local index
+  local char
+  local encoded=""
+
+  for ((index = 0; index < length; index++)); do
+    char="${value:index:1}"
+    case "$char" in
+      [a-zA-Z0-9._~-])
+        encoded+="$char"
+        ;;
+      *)
+        printf -v char '%%%02X' "'$char"
+        encoded+="$char"
+        ;;
+    esac
+  done
+
+  printf '%s' "$encoded"
+}
+
 render_tailscale_nav_html() {
   local current="$1"
   local alias
@@ -243,14 +275,7 @@ render_tailscale_nav_html() {
     class_name="segmented-link"
     label="$(normalize_host_alias "$alias")"
     if [[ "$label" == "$current" ]]; then
-      class_name="segmented-link is-active tint-trigger"
-      printf '        <label class="%s" title="Change tint for this host">\n' \
-        "$(html_escape "$class_name")"
-      printf '          <span class="segment-label">%s</span>\n' \
-        "$(html_escape "$label")"
-      printf '          <input class="segment-tint-picker" id="active-tint-picker" type="color" value="#0f766e" aria-label="Choose accent tint for this host">\n'
-      printf '        </label>\n'
-      continue
+      class_name="segmented-link is-active"
     fi
     printf '        <a class="%s" href="%s">%s</a>\n' \
       "$(html_escape "$class_name")" \
@@ -264,10 +289,16 @@ agent_gateway_port() {
   repo_cfg_value "agent-ports" "$agent_id"
 }
 
-agent_status() {
+agent_status_for_start_args() {
   local agent_id="$1"
+  local start_args="$2"
   local state
   local label
+
+  if [[ -z "$start_args" ]]; then
+    printf '%s' "interactive"
+    return
+  fi
 
   if is_linux; then
     state="$(systemd_service_state "agent@${agent_id}")"
@@ -295,33 +326,73 @@ agent_status() {
   printf '%s' "unknown"
 }
 
-render_agent_links_html() {
-  local -a ids=("$@")
+prepare_agent_render_cache() {
   local agent_id
   local dir_name
+  local kind
+  local port
+  local start_args
+  local status
+  local tui_args
+
+  RENDER_AGENT_IDS=()
+  RENDER_AGENT_NAMES=()
+  RENDER_AGENT_PORTS=()
+  RENDER_AGENT_STATUSES=()
+  RENDER_AGENT_TUI_ARGS=()
+  RENDER_AGENT_START_ARGS=()
+
+  for agent_id in "$@"; do
+    [[ -n "$agent_id" ]] || continue
+    kind="$(known_agent_kind_for_id "$agent_id")" || continue
+    dir_name="$(agent_directory_name "$agent_id")"
+    port="$(agent_gateway_port "$agent_id")"
+    load_agent_kind_definition "$kind"
+    tui_args="${CLAWLAB_AGENT_TUI_ARGS:-}"
+    start_args="${CLAWLAB_AGENT_START_ARGS:-}"
+    status="$(agent_status_for_start_args "$agent_id" "$start_args")"
+
+    RENDER_AGENT_IDS+=("$agent_id")
+    RENDER_AGENT_NAMES+=("$dir_name")
+    RENDER_AGENT_PORTS+=("$port")
+    RENDER_AGENT_STATUSES+=("$status")
+    RENDER_AGENT_TUI_ARGS+=("$tui_args")
+    RENDER_AGENT_START_ARGS+=("$start_args")
+  done
+}
+
+render_agent_links_html() {
+  local agent_id
+  local dir_name
+  local index
   local port
   local status
   local status_class
-  local agent_path
+  local actions_html
+  local details_html
+  local title_html
+  local tui_args
+  local tui_url
 
-  for agent_id in "${ids[@]}"; do
-    dir_name="$(agent_directory_name "$agent_id")"
-    port="$(agent_gateway_port "$agent_id")"
-    status="$(agent_status "$agent_id")"
-    agent_path="/${agent_id}/"
+  for index in "${!RENDER_AGENT_IDS[@]}"; do
+    agent_id="${RENDER_AGENT_IDS[$index]}"
+    dir_name="${RENDER_AGENT_NAMES[$index]}"
+    port="${RENDER_AGENT_PORTS[$index]}"
+    status="${RENDER_AGENT_STATUSES[$index]}"
+    tui_args="${RENDER_AGENT_TUI_ARGS[$index]}"
     status_class="$(status_class_for_state "$status")"
-    if [[ "$dir_name" == *"-picoclaw" ]]; then
-      agent_path="/${agent_id}/health"
-    elif [[ "$dir_name" == *"-openclaw" ]]; then
-      agent_path="/${agent_id}/overview"
+    actions_html="$(render_action_menu_html "$agent_id")"
+    if [[ -n "$tui_args" ]]; then
+      tui_url="/tty/${agent_id}/tui/"
+      title_html="<a href=\"$(html_escape "$tui_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"
+    else
+      title_html="<span class=\"item-name\">$(html_escape "$dir_name")</span>"
     fi
-    [[ -n "$port" ]] || continue
-    printf '        <li><a href="%s" target="_blank" rel="noreferrer">%s</a> <small><span class="%s">%s</span> <span>port: <code>%s</code></span></small></li>\n' \
-      "$(html_escape "$agent_path")" \
-      "$(html_escape "$dir_name")" \
-      "$(html_escape "$status_class")" \
-      "$(html_escape "$status")" \
-      "$(html_escape "$port")"
+    details_html=""
+    if [[ -n "$port" ]]; then
+      details_html="<span class=\"detail-port\">port: <code>$(html_escape "$port")</code></span>"
+    fi
+    render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" "$actions_html"
   done
 }
 
@@ -332,11 +403,36 @@ status_class_for_state() {
     printf 'status-running'
   elif [[ "$status" == "configured" || "$status" == "inactive" || "$status" == "activating" || "$status" == "deactivating" ]]; then
     printf 'status-configured'
+  elif [[ "$status" == "interactive" ]]; then
+    printf 'status-interactive'
   elif [[ "$status" == "unavailable" || "$status" == "failed" || "$status" == "unloaded" ]]; then
     printf 'status-unavailable'
   else
     printf 'status-unknown'
   fi
+}
+
+render_dashboard_row_html() {
+  local title_html="$1"
+  local status_class="$2"
+  local status="$3"
+  local details_html="$4"
+  local actions_html="$5"
+  local status_html=""
+  local actions_block=""
+
+  if [[ -n "$status" ]]; then
+    status_html=" <span class=\"$(html_escape "$status_class")\">$(html_escape "$status")</span>"
+  fi
+  if [[ -n "$actions_html" ]]; then
+    actions_block="<div class=\"row-actions\">${actions_html}</div>"
+  fi
+
+  printf '        <li class="dashboard-row"><div class="row-main"><div class="row-title">%s%s</div><div class="row-details">%s</div></div>%s</li>\n' \
+    "$title_html" \
+    "$status_html" \
+    "$details_html" \
+    "$actions_block"
 }
 
 render_service_links_html() {
@@ -347,89 +443,149 @@ render_service_links_html() {
   local service_id_html
   local status
   local status_class
-  local status_class_html
-  local status_html
-  local host_name
-  local host_name_html
-  local managed_id
   local managed_root_id
-  local managed_status
-  local managed_status_class
+  local title_html
+  local details_html
 
   managed_root_id="$(caddy_root_service_id)"
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
-    if [[ -n "$managed_root_id" && "$service_id" == "$managed_root_id" ]]; then
-      if service_requested_from_env "caddy"; then
-        continue
-      fi
-    fi
     load_service_definition "$service_id"
     status="$(service_status "$service_id")"
     status_class="$(status_class_for_state "$status")"
+    case "$status" in
+      running|active|interactive) ;;
+      *) continue ;;
+    esac
     route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
     service_id_html="$(html_escape "$service_id")"
-    status_class_html="$(html_escape "$status_class")"
-    status_html="$(html_escape "$status")"
+    if [[ -n "$managed_root_id" && "$service_id" == "$managed_root_id" ]]; then
+      local managed_port_html=""
+      local managed_path_html=""
+      if [[ -n "${CLAWLAB_SERVICE_PORT:-}" ]]; then
+        managed_port_html="<span class=\"detail-port\">port: <code>$(html_escape "$CLAWLAB_SERVICE_PORT")</code></span>"
+      fi
+      managed_path_html="<span class=\"detail-path\">path: <code>/</code></span>"
+      title_html="<span class=\"item-name\">${service_id_html}</span>"
+      details_html="${managed_port_html}${managed_port_html:+ }${managed_path_html}"
+      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
+      continue
+    fi
     if [[ "$route" == /* ]]; then
       route_html="$(html_escape "$route")"
-      printf '        <li><a href="%s/" target="_blank" rel="noreferrer">%s</a> <small><span class="%s">%s</span> <span>path: <code>%s</code></span></small></li>\n' \
-        "$route_html" \
-        "$service_id_html" \
-        "$status_class_html" \
-        "$status_html" \
-        "$route_html"
+      local managed_port_html=""
+      if [[ -n "${CLAWLAB_SERVICE_PORT:-}" ]]; then
+        managed_port_html="<span class=\"detail-port\">port: <code>$(html_escape "$CLAWLAB_SERVICE_PORT")</code></span>"
+      fi
+      title_html="<span class=\"item-name\">${service_id_html}</span>"
+      details_html="${managed_port_html}${managed_port_html:+ }<span class=\"detail-path\">path: <code>${route_html}</code></span>"
+      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
     if [[ "$route" == :* ]]; then
       route_port="${route#:}"
       route_html="$(html_escape "$route_port")"
-      host_name="${CLAWLAB_HOST:-$(hostname -s 2>/dev/null || hostname)}"
-      host_name_html="$(html_escape "$host_name")"
-      printf '        <li><a href="http://%s:%s/" target="_blank" rel="noreferrer">%s</a> <small><span class="%s">%s</span> <span>port: <code>%s</code></span></small></li>\n' \
-        "$host_name_html" \
-        "$route_html" \
-        "$service_id_html" \
-        "$status_class_html" \
-        "$status_html" \
-        "$route_html"
+      title_html="<span class=\"item-name\">${service_id_html}</span>"
+      details_html="<span class=\"detail-port\">port: <code>${route_html}</code></span>"
+      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
     if [[ -n "$route" ]]; then
       route_html="$(html_escape "$route")"
-      printf '        <li><a href="http://%s/" target="_blank" rel="noreferrer">%s</a> <small><span class="%s">%s</span> <span>host: <code>%s</code></span></small></li>\n' \
-        "$route_html" \
-        "$service_id_html" \
-        "$status_class_html" \
-        "$status_html" \
-        "$route_html"
+      title_html="<span class=\"item-name\">${service_id_html}</span>"
+      details_html="<span>host: <code>${route_html}</code></span>"
+      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
-    printf '        <li><span class="item-name">%s</span> <small><span class="%s">%s</span></small></li>\n' \
-      "$service_id_html" \
-      "$status_class_html" \
-      "$status_html"
-    if [[ "$service_id" == "caddy" ]]; then
-      while IFS= read -r managed_id; do
-        [[ -n "$managed_id" ]] || continue
-        load_service_definition "$managed_id"
-        managed_status="$(service_status "$managed_id")"
-        managed_status_class="$(status_class_for_state "$managed_status")"
-        host_name="${CLAWLAB_HOST:-$(hostname -s 2>/dev/null || hostname)}"
-        local managed_port_html=""
-        if [[ -n "${CLAWLAB_SERVICE_PORT:-}" ]]; then
-          managed_port_html=" <span>port: <code>$(html_escape "$CLAWLAB_SERVICE_PORT")</code></span>"
-        fi
-        printf '        <li><a href="http://%s/">%s</a> <small><span class="%s">%s</span>%s</small></li>\n' \
-          "$(html_escape "$host_name")" \
-          "$(html_escape "$managed_id")" \
-          "$(html_escape "$managed_status_class")" \
-          "$(html_escape "$managed_status")" \
-          "$managed_port_html"
-      done < <(caddy_managed_service_ids)
+    title_html="<span class=\"item-name\">${service_id_html}</span>"
+    render_dashboard_row_html "$title_html" "$status_class" "$status" "" ""
+  done < <(service_definition_ids)
+}
+
+render_action_menu_html() {
+  local target="$1"
+  local agent_id
+  local agent_html=""
+  local dir_name
+  local index
+  local interactive_agent_html=""
+  local start_args
+  local tui_args
+  local option_url
+  local tool_html=""
+  local sections_html=""
+
+  option_url="/tty/$(url_encode_path_segment "$target")/"
+  tool_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">shell</a>"$'\n'
+
+  for index in "${!RENDER_AGENT_IDS[@]}"; do
+    agent_id="${RENDER_AGENT_IDS[$index]}"
+    [[ -n "$agent_id" ]] || continue
+    dir_name="${RENDER_AGENT_NAMES[$index]}"
+    option_url="/tty/$(url_encode_path_segment "$target")/${agent_id}/tui/"
+    tui_args="${RENDER_AGENT_TUI_ARGS[$index]}"
+    [[ -n "$tui_args" ]] || continue
+    start_args="${RENDER_AGENT_START_ARGS[$index]}"
+    if [[ -z "$start_args" ]]; then
+      interactive_agent_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"$'\n'
+    else
+      agent_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"$'\n'
     fi
-  done < <(requested_service_ids_from_env)
+  done
+
+  sections_html+="            <div class=\"action-menu-section\">"$'\n'
+  sections_html+="              <div class=\"action-menu-heading\">open with</div>"$'\n'
+  sections_html+="$tool_html"
+  sections_html+="            </div>"$'\n'
+  if [[ -n "$interactive_agent_html" ]]; then
+    sections_html+="            <div class=\"action-menu-section\">"$'\n'
+    sections_html+="              <div class=\"action-menu-heading\">interactive agents</div>"$'\n'
+    sections_html+="$interactive_agent_html"
+    sections_html+="            </div>"$'\n'
+  fi
+  if [[ -n "$agent_html" ]]; then
+    sections_html+="            <div class=\"action-menu-section\">"$'\n'
+    sections_html+="              <div class=\"action-menu-heading\">running agents</div>"$'\n'
+    sections_html+="$agent_html"
+    sections_html+="            </div>"$'\n'
+  fi
+  cat <<EOF
+<details class="action-menu">
+          <summary class="icon-button row-action-button" aria-label="Actions" title="Actions">
+            <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          </summary>
+          <div class="action-menu-panel">
+${sections_html}          </div>
+        </details>
+EOF
+}
+
+render_project_links_html() {
+  local raw="${CLAWLAB_PROJECTS:-}"
+  local item
+  local title
+  local path
+  local project_url
+  local actions_html
+  local title_html
+  local details_html
+
+  [[ -n "$raw" ]] || return 0
+
+  # shellcheck disable=SC2206
+  local -a items=($raw)
+  for item in "${items[@]}"; do
+    [[ "$item" == *=* ]] || continue
+    title="${item%%=*}"
+    path="${item#*=}"
+    [[ -n "$title" && -n "$path" ]] || continue
+    project_url="/tty/$(url_encode_path_segment "$title")/"
+    actions_html="$(render_action_menu_html "$title")"
+    title_html="<a href=\"$(html_escape "$project_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$title")</a>"
+    details_html="<span class=\"detail-path\">path: <code>$(html_escape "$path")</code></span>"
+    render_dashboard_row_html "$title_html" "" "" "$details_html" "$actions_html"
+  done
 }
 
 render_dash_section_html() {
@@ -468,7 +624,6 @@ service_status() {
 
 caddy_root_upstream() {
   local service_id
-  local state
 
   if ! service_requested_from_env "caddy"; then
     return 0
@@ -477,17 +632,22 @@ caddy_root_upstream() {
   service_id="$(caddy_root_service_id)"
   [[ -n "$service_id" ]] || return 0
 
-  state="$(service_status "$service_id")"
-  if [[ "$state" == "active" || "$state" == "running" ]]; then
-    load_service_definition "$service_id"
-    printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM")"
-  fi
+  load_service_definition "$service_id"
+  printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM")"
+}
+
+tailscale_only_enabled() {
+  case "${CLAWLAB_TAILSCALE_ONLY:-}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 render_index_html() {
   local host_name
   local generated_at
   local agent_links_html
+  local project_links_html
   local service_links_html
   local sections_html
   local tailscale_nav_html
@@ -498,9 +658,18 @@ render_index_html() {
   host_name="$(hostname -s 2>/dev/null || hostname)"
   current_section="$(tailscale_section_name)"
   generated_at="$(TZ="$(display_timezone)" date +"%Y-%m-%d %H:%M:%S %Z")"
-  agent_links_html="$(render_agent_links_html "${ids[@]}")"
+  prepare_agent_render_cache "${ids[@]}"
+  agent_links_html="$(render_agent_links_html)"
+  project_links_html="$(render_project_links_html)"
   service_links_html="$(render_service_links_html)"
   sections_html="$(render_dash_section_html "agents" "agents" "$agent_links_html")"
+  if [[ -n "$project_links_html" ]]; then
+    if [[ -n "$sections_html" ]]; then
+      sections_html="${sections_html}"$'\n'"$(render_dash_section_html "projects" "projects" "$project_links_html")"
+    else
+      sections_html="$(render_dash_section_html "projects" "projects" "$project_links_html")"
+    fi
+  fi
   if [[ -n "$service_links_html" ]]; then
     if [[ -n "$sections_html" ]]; then
       sections_html="${sections_html}"$'\n'"$(render_dash_section_html "services" "services" "$service_links_html")"
@@ -534,15 +703,16 @@ render_managed_block() {
     [[ -n "$service_id" ]] || continue
     load_service_definition "$service_id"
     route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
-    upstream="${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}"
+    upstream="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}")"
     [[ -n "$route" && "$route" != /* && -n "$upstream" ]] || continue
     site_address="$route"
     if [[ "$site_address" != :* && "$site_address" != *:* ]]; then
       site_address="${site_address}:80"
     fi
-    cat <<EOF
+    if tailscale_only_enabled; then
+      cat <<EOF
 ${site_address} {
-  @tailscale remote_ip 100.64.0.0/10
+  @tailscale remote_ip 100.64.0.0/10 fd7a:115c:a1e0::/48 127.0.0.1 ::1
 
   handle @tailscale {
     reverse_proxy ${upstream}
@@ -552,14 +722,28 @@ ${site_address} {
 }
 
 EOF
+    else
+      cat <<EOF
+${site_address} {
+  reverse_proxy ${upstream}
+}
+
+EOF
+    fi
   done < <(requested_service_ids_from_env)
 
-  cat <<EOF
+  if tailscale_only_enabled; then
+    cat <<EOF
 :80 {
-  @tailscale remote_ip 100.64.0.0/10
+  @tailscale remote_ip 100.64.0.0/10 fd7a:115c:a1e0::/48 127.0.0.1 ::1
 
   handle @tailscale {
 EOF
+  else
+    cat <<EOF
+:80 {
+EOF
+  fi
 
   for agent_id in "$@"; do
     port="$(agent_gateway_port "$agent_id")"
@@ -577,21 +761,24 @@ EOF
     [[ -n "$service_id" ]] || continue
     load_service_definition "$service_id"
     route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
-    upstream="${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}"
+    upstream="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}")"
     [[ "$route" == /* && -n "$upstream" ]] || continue
+    if [[ "$route" == "/" ]]; then
+      continue
+    fi
     cat <<EOF
     @service_${service_id} path ${route} ${route}/*
     handle @service_${service_id} {
-      uri strip_prefix ${route}
       reverse_proxy ${upstream}
     }
 EOF
-  done < <(requested_service_ids_from_env)
+  done < <(caddy_root_service_ids)
 
   root_upstream="$(caddy_root_upstream)"
 
   if [[ -n "$root_upstream" ]]; then
-    cat <<EOF
+    if tailscale_only_enabled; then
+      cat <<EOF
     handle {
       reverse_proxy ${root_upstream}
     }
@@ -600,10 +787,19 @@ EOF
   respond "forbidden" 403
 }
 EOF
+    else
+      cat <<EOF
+  handle {
+    reverse_proxy ${root_upstream}
+  }
+}
+EOF
+    fi
     return
   fi
 
-  cat <<EOF
+  if tailscale_only_enabled; then
+    cat <<EOF
     root * "$(generated_web_root_relative)"
     file_server
   }
@@ -611,6 +807,13 @@ EOF
   respond "forbidden" 403
 }
 EOF
+  else
+    cat <<EOF
+  root * "$(generated_web_root_relative)"
+  file_server
+}
+EOF
+  fi
 }
 
 write_index_html() {
@@ -651,16 +854,19 @@ render_brew_target() {
   collect_agent_packages
   mkdir -p "$(dirname "$(brewfile_path)")"
   render_brewfile > "$(brewfile_path)"
-  printf '[rendered] %s with %s packages\n' "$(brewfile_path)" "${#BREW_PACKAGES[@]}"
+  log_verbose "[rendered] $(brewfile_path) with ${#BREW_PACKAGES[@]} packages"
 }
 
-collect_render_agent_ids() {
+collect_render_gateway_agent_ids() {
   local -a requested_agents=()
   local agent_id
+  local kind
   local port
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
+    known_agent_kind_for_id "$agent_id" >/dev/null || continue
+    agent_is_managed "$agent_id" || continue
     port="$(agent_gateway_port "$agent_id")"
     if [[ -z "$port" ]]; then
       echo "missing port for agent ${agent_id} in $(repo_cfg_file)" >&2
@@ -669,7 +875,16 @@ collect_render_agent_ids() {
     requested_agents+=("$agent_id")
   done < <(requested_agent_ids_from_env)
 
-  printf '%s\n' "${requested_agents[@]}"
+  ((${#requested_agents[@]} == 0)) || printf '%s\n' "${requested_agents[@]}"
+}
+
+collect_render_agent_ids() {
+  local agent_id
+
+  while IFS= read -r agent_id; do
+    [[ -n "$agent_id" ]] || continue
+    printf '%s\n' "$agent_id"
+  done < <(requested_agent_ids_from_env)
 }
 
 render_dash_target() {
@@ -681,8 +896,8 @@ render_dash_target() {
     requested_agents+=("$agent_id")
   done < <(collect_render_agent_ids)
 
-  write_index_html "${requested_agents[@]}"
-  printf '[rendered] %s from %s\n' "$(generated_index_path)" "$(dash_page_template_path)"
+  write_index_html "${requested_agents[@]+"${requested_agents[@]}"}"
+  log_verbose "[rendered] $(generated_index_path) from $(dash_page_template_path)"
 }
 
 render_caddy_target() {
@@ -692,11 +907,11 @@ render_caddy_target() {
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
     requested_agents+=("$agent_id")
-  done < <(collect_render_agent_ids)
+  done < <(collect_render_gateway_agent_ids)
 
   render_dash_target >/dev/null
-  write_caddyfile "${requested_agents[@]}"
-  printf '[rendered] %s with %s agent routes\n' "$(caddyfile_path)" "${#requested_agents[@]}"
+  write_caddyfile "${requested_agents[@]+"${requested_agents[@]}"}"
+  log_verbose "[rendered] $(caddyfile_path) with ${#requested_agents[@]} agent routes"
 }
 
 usage() {

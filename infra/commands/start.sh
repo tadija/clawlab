@@ -4,6 +4,7 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
 
+CLAWLAB_LOG_PREFIX="start"
 load_host_env
 
 CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
@@ -25,13 +26,13 @@ Examples:
 EOF
 }
 
-progress() {
-  printf '[start] %s\n' "$1"
-}
-
 start_systemd_service() {
   local service="$1"
-  sudo systemctl enable --now "$service"
+  if verbose_enabled; then
+    sudo systemctl enable --now "$service"
+  else
+    sudo systemctl enable --now "$service" >/dev/null
+  fi
 }
 
 start_launchd_service() {
@@ -48,7 +49,7 @@ start_launchd_agent() {
   local label
   local plist
   label="$(service_label_for_agent "$agent_id")"
-  verbose_progress "refreshing agent service-manager artifact for $agent_id"
+  log_verbose "refreshing agent service-manager artifact for $agent_id"
   plist="$(install_launchd_agent_plist "$agent_id" "$CLAWLAB_ROOT" "$CLAWLAB_USER")"
   sudo launchctl bootout system "$plist" >/dev/null 2>&1 || true
   sudo launchctl enable "system/$label"
@@ -61,7 +62,7 @@ start_service() {
 
   load_service_definition "$service_id"
   repair_clawlab_service_permissions
-  verbose_progress "refreshing service-manager artifact for $service_id"
+  log_verbose "refreshing service-manager artifact for $service_id"
   if is_linux; then
     install_systemd_service_unit "$service_id" >/dev/null
     sudo systemctl daemon-reload
@@ -76,8 +77,8 @@ start_service() {
 
 prepare_service_start() {
   local service_id="$1"
-  if [[ "$service_id" == "dash" ]]; then
-    run_service_installer "$service_id"
+  run_service_installer "$service_id"
+  if [[ "$service_id" == "dash-http" ]]; then
     bash "$(repo_root)/infra/commands/render.sh" dash
   elif [[ "$service_id" == "caddy" ]]; then
     bash "$(repo_root)/infra/commands/render.sh" caddy
@@ -106,12 +107,17 @@ main() {
   local agent_template_installed=0
   for item in "${requested[@]}"; do
     index=$((index + 1))
-    progress "[$index/$total] starting $item"
+    log_verbose "[$index/$total] starting $item"
     if is_agent_id "$item"; then
+      known_agent_kind_for_id "$item" >/dev/null || continue
+      if ! agent_is_managed "$item"; then
+        log_verbose "[$index/$total] skipped $item [interactive]"
+        continue
+      fi
       repair_clawlab_agent_permissions "$item" "$CLAWLAB_USER"
       if is_linux; then
         if ((agent_template_installed == 0)); then
-          verbose_progress "refreshing agent service-manager artifact"
+          log_verbose "refreshing agent service-manager artifact"
           install_systemd_agent_unit_template "$CLAWLAB_ROOT" "$CLAWLAB_USER" >/dev/null
           sudo systemctl daemon-reload
           agent_template_installed=1
@@ -138,10 +144,10 @@ main() {
       echo "unknown service or agent id: $item"
       exit 1
     fi
-    progress "[$index/$total] finished $item"
+    log_verbose "[$index/$total] finished $item"
   done
 
-  progress "completed"
+  log_verbose "completed"
 }
 
 main "$@"

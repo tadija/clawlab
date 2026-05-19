@@ -5,6 +5,9 @@ import Foundation
 import Glibc
 #else
 import Darwin
+
+@_silgen_name("_NSGetEnviron")
+func _NSGetEnviron() -> UnsafeMutablePointer<UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?>
 #endif
 
 func usage() {
@@ -12,21 +15,26 @@ func usage() {
 Usage:
   cmd list
   cmd make <agent-id-agent-kind|existing-agent-id> [args...]
+  cmd rename <old-agent-id> <new-agent-id> [-y|--yes]
   cmd remove <agent-id> [agent-id...] [-y|--yes]
-  cmd <agent-id> <command...>
-  cmd infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render> [args...]
+  cmd <agent-id> [setup|start|stop|tui|native-command...]
+  cmd <service-id> <native-command...>
+  cmd infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render|update> [args...]
 
 Global commands:
   list    -> list existing agents
   make    -> create agent working dir if needed and run native setup once
+  rename  -> rename an existing agent id and related host config
   remove  -> remove agent working dir(s) (-y to confirm)
   infra   -> run clawlab infra scripts
 
 Agent commands:
   bootstrap -> install runtime/dependencies for this agent kind
   edit    -> open agent working dir in $EDITOR
+  setup   -> run native setup for this agent kind
   start   -> start gateway / daemon (depending on agent)
   stop    -> stop gateway / daemon (depending on agent)
+  tui     -> run native terminal UI when the agent kind supports it
 
 Examples:
   ./cmd list
@@ -57,8 +65,31 @@ Examples:
 }
 
 
+func currentEnvironmentPointer() -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? {
+#if os(Linux)
+    return environ
+#else
+    return _NSGetEnviron().pointee
+#endif
+}
+
+func log(_ scope: String, _ message: String) {
+    print("[\(scope)] \(message)")
+}
+
+func logError(_ scope: String, _ message: String) {
+    fputs("[\(scope)] \(message)\n", stderr)
+}
+
+func logDetail(_ message: String) {
+    print("  \(message)")
+}
+
+
+
 enum GlobalCommand: String {
     case make
+    case rename
     case remove
     case list
     case infra
@@ -67,8 +98,10 @@ enum GlobalCommand: String {
 enum AgentCommand: String {
     case bootstrap
     case edit
+    case setup
     case start
     case stop
+    case tui
 }
 
 struct AgentKindSpec {
@@ -82,10 +115,17 @@ struct AgentKindSpec {
     let installScript: String?
     let initArgs: [String]
     let hasInitCommand: Bool
+    let tuiArgs: [String]
     let startArgs: [String]
+    let hasStartCommand: Bool
     let startPortFlag: String?
     let stopArgs: [String]
     let forwardPrefix: [String]
+}
+
+struct ServiceSpec {
+    let id: String
+    let bin: String
 }
 
 let rootURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -94,7 +134,9 @@ let configRootURL = rootURL.appendingPathComponent("config", isDirectory: true)
 let customConfigURL = configRootURL.appendingPathComponent("custom", isDirectory: true)
 let repoConfigURL = customConfigURL.appendingPathComponent("repo.ini")
 let agentKindsURL = configRootURL.appendingPathComponent("agents", isDirectory: true)
+let servicesURL = configRootURL.appendingPathComponent("services", isDirectory: true)
 let customAgentKindsURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("agents", isDirectory: true)
+let customServicesURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("services", isDirectory: true)
 let customEnvURL = customConfigURL.appendingPathComponent("env", isDirectory: true)
 
 var agentEntries: [URL] {
@@ -192,24 +234,24 @@ func parseEnvAssignments(_ value: String?) -> [(String, String)] {
     }
 }
 
+func envFileURLs(in directory: URL) -> [URL] {
+    guard let urls = try? FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return []
+    }
+
+    return urls.filter { $0.pathExtension == "env" }
+}
+
 func fatalConfig(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
     exit(1)
 }
 
 func loadAgentKindSpecs() -> [AgentKindSpec] {
-    func envFileURLs(in directory: URL) -> [URL] {
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
-
-        return urls.filter { $0.pathExtension == "env" }
-    }
-
     let fileNames = Set(envFileURLs(in: agentKindsURL).map(\.lastPathComponent))
         .union(Set(envFileURLs(in: customAgentKindsURL).map(\.lastPathComponent)))
         .sorted()
@@ -241,7 +283,9 @@ func loadAgentKindSpecs() -> [AgentKindSpec] {
             installScript: values["CLAWLAB_AGENT_INSTALL_SCRIPT"].flatMap { $0.isEmpty ? nil : $0 },
             initArgs: splitTemplateArgs(values["CLAWLAB_AGENT_SETUP_ARGS"]),
             hasInitCommand: values["CLAWLAB_AGENT_SETUP_ARGS"] != nil,
-            startArgs: splitTemplateArgs(require("CLAWLAB_AGENT_START_ARGS")),
+            tuiArgs: splitTemplateArgs(values["CLAWLAB_AGENT_TUI_ARGS"]),
+            startArgs: splitTemplateArgs(values["CLAWLAB_AGENT_START_ARGS"]),
+            hasStartCommand: values["CLAWLAB_AGENT_START_ARGS"] != nil,
             startPortFlag: values["CLAWLAB_AGENT_START_PORT_FLAG"].flatMap { $0.isEmpty ? nil : $0 },
             stopArgs: splitTemplateArgs(values["CLAWLAB_AGENT_STOP_ARGS"]),
             forwardPrefix: splitTemplateArgs(require("CLAWLAB_AGENT_FORWARD_PREFIX"))
@@ -251,6 +295,39 @@ func loadAgentKindSpecs() -> [AgentKindSpec] {
 
 let agentKindSpecs = loadAgentKindSpecs()
 let agentKindsByName = Dictionary(uniqueKeysWithValues: agentKindSpecs.map { ($0.kind, $0) })
+
+func loadServiceSpecs() -> [ServiceSpec] {
+    let fileNames = Set(envFileURLs(in: servicesURL).map(\.lastPathComponent))
+        .union(Set(envFileURLs(in: customServicesURL).map(\.lastPathComponent)))
+        .sorted()
+
+    return fileNames.map { fileName in
+        let serviceID = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
+        let baseURL = servicesURL.appendingPathComponent(fileName)
+        let customURL = customServicesURL.appendingPathComponent(fileName)
+        let values = parseEnvFile(at: baseURL).merging(parseEnvFile(at: customURL)) { _, custom in custom }
+
+        func require(_ key: String) -> String {
+            guard let value = values[key], !value.isEmpty else {
+                fatalConfig("service config \(fileName) is missing \(key)")
+            }
+            return value
+        }
+
+        let id = require("CLAWLAB_SERVICE_ID")
+        guard id == serviceID else {
+            fatalConfig("service config \(fileName) does not match CLAWLAB_SERVICE_ID=\(id)")
+        }
+
+        return ServiceSpec(
+            id: id,
+            bin: require("CLAWLAB_SERVICE_BIN")
+        )
+    }
+}
+
+let serviceSpecs = loadServiceSpecs()
+let serviceSpecsByID = Dictionary(uniqueKeysWithValues: serviceSpecs.map { ($0.id, $0) })
 
 func listAgents() -> Never {
     let agents = existingAgentNames().sorted()
@@ -266,10 +343,11 @@ func listAgents() -> Never {
 
 enum ParsedCommand {
     case globalMake(agentArg: String, extra: [String])
+    case globalRename(args: [String])
     case globalRemove(args: [String])
     case globalList
     case globalInfra(subcommand: String, extra: [String])
-    case agent(agentArg: String, command: String, extra: [String])
+    case agent(agentArg: String, command: String?, extra: [String])
 }
 
 func parseArgs(_ args: [String]) -> ParsedCommand {
@@ -291,6 +369,12 @@ func parseArgs(_ args: [String]) -> ParsedCommand {
             exit(1)
         }
         return .globalMake(agentArg: args[2], extra: Array(args.dropFirst(3)))
+    case GlobalCommand.rename.rawValue:
+        if args.count < 4 {
+            fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+            exit(1)
+        }
+        return .globalRename(args: Array(args.dropFirst(2)))
     case GlobalCommand.remove.rawValue:
         if args.count < 3 {
             fputs("usage: cmd remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
@@ -307,12 +391,10 @@ func parseArgs(_ args: [String]) -> ParsedCommand {
         }
         return .globalInfra(subcommand: args[2], extra: Array(args.dropFirst(3)))
     default:
-        if args.count < 3 {
-            usage()
-            exit(1)
-        }
-        if args[2] == GlobalCommand.make.rawValue || args[2] == GlobalCommand.remove.rawValue || args[2] == GlobalCommand.list.rawValue {
-            fputs("usage: cmd <agent-id> <command...>\n", stderr)
+        guard args.count >= 2 else { fatalConfig("usage: cmd <agent-id> [command...]") }
+        guard args.count >= 3 else { return .agent(agentArg: args[1], command: nil, extra: []) }
+        if args[2] == GlobalCommand.make.rawValue || args[2] == GlobalCommand.rename.rawValue || args[2] == GlobalCommand.remove.rawValue || args[2] == GlobalCommand.list.rawValue {
+            fputs("usage: cmd <agent-id> [command...]\n", stderr)
             exit(1)
         }
         return .agent(agentArg: args[1], command: args[2], extra: Array(args.dropFirst(3)))
@@ -403,6 +485,10 @@ func agentKindName(from agentName: String) -> String? {
     let parts = agentNameParts(agentName)
     guard parts.count >= 2 else { return nil }
     return parts[1]
+}
+
+func isBareAgentId(_ value: String) -> Bool {
+    value.range(of: #"^[0-9]{3}$"#, options: .regularExpression) != nil
 }
 
 func agentKindSpec(for agentName: String) -> AgentKindSpec? {
@@ -506,29 +592,62 @@ func runCommandAndWait(_ argv: [String]) {
         exit(1)
     }
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: resolveExecutable(first))
-    process.arguments = Array(argv.dropFirst())
-    process.standardInput = FileHandle.standardInput
-    process.standardOutput = FileHandle.standardOutput
-    process.standardError = FileHandle.standardError
+    var resolved = argv
+    resolved[0] = resolveExecutable(first)
 
-    do {
-        try process.run()
-        process.waitUntilExit()
-    } catch {
-        fputs("failed to run \(argv.joined(separator: " ")): \(error)\n", stderr)
-        exit(1)
+    let code = spawnAndWait(resolved)
+    if code != 0 {
+        exit(code)
+    }
+}
+
+func spawnAndWait(_ argv: [String]) -> Int32 {
+    var child: pid_t = 0
+    var cArgs = argv.map { strdup($0) }
+    cArgs.append(nil)
+
+    let spawnResult = argv[0].withCString { path in
+        cArgs.withUnsafeMutableBufferPointer { argsBuffer -> Int32 in
+            guard let argv = argsBuffer.baseAddress else {
+                return EINVAL
+            }
+            return posix_spawn(&child, path, nil, nil, argv, currentEnvironmentPointer())
+        }
     }
 
-    if process.terminationStatus != 0 {
-        exit(process.terminationStatus)
+    for arg in cArgs {
+        free(arg)
     }
+
+    if spawnResult != 0 {
+        errno = spawnResult
+        perror("posix_spawn")
+        return 1
+    }
+
+    var status: Int32 = 0
+    while true {
+        let waited = waitpid(child, &status, 0)
+        if waited == child {
+            break
+        }
+        if waited == -1 && errno == EINTR {
+            continue
+        }
+        perror("waitpid")
+        return 1
+    }
+
+    if status & 0x7f == 0 {
+        return (status >> 8) & 0xff
+    }
+    let signal = status & 0x7f
+    return 128 + signal
 }
 
 func infraScriptPath(_ subcommand: String) -> String {
     let infraRoot = rootURL.appendingPathComponent("infra")
-    let builtInSubcommands: Set<String> = ["bootstrap", "install", "uninstall", "start", "stop", "restart", "status", "doctor", "log", "render"]
+    let builtInSubcommands: Set<String> = ["bootstrap", "install", "uninstall", "start", "stop", "restart", "status", "doctor", "log", "render", "update"]
     let customScriptsURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("infra", isDirectory: true)
     let customScriptURL = customScriptsURL.appendingPathComponent("\(subcommand).sh")
 
@@ -631,12 +750,12 @@ func handleInit(agent: String, agentURL: URL, kind: AgentKindSpec, extra: [Strin
         }
         try ensureGitkeep(in: agentURL)
         if created {
-            print("created working dir: \(agent)")
+            log("make", "created agent directory: \(agent)")
         }
 
         let contents = agentDirectoryContents(at: agentURL)
         if contents != [".gitkeep"] {
-            print("skipping make for non-empty agent dir: \(agent)")
+            log("make", "skipping setup for non-empty agent directory: \(agent)")
             exit(0)
         }
 
@@ -678,8 +797,9 @@ func applyEnvFile(at envURL: URL, agentURL: URL) {
 }
 
 func switchToAgentDirectory(_ agentURL: URL) {
-    guard FileManager.default.changeCurrentDirectoryPath(agentURL.path) else {
-        fputs("failed to switch to agent dir: \(agentURL.path)\n", stderr)
+    let workspace = ProcessInfo.processInfo.environment["CLAWLAB_AGENT_WORKSPACE"] ?? agentURL.path
+    guard FileManager.default.changeCurrentDirectoryPath(workspace) else {
+        fputs("failed to switch to workspace: \(workspace)\n", stderr)
         exit(1)
     }
 }
@@ -708,8 +828,9 @@ func expandTemplateArgs(_ args: [String], agentURL: URL, port: String? = nil, co
     return expanded
 }
 
-func buildForwardArgs(kind: AgentKindSpec, agentURL: URL, command: String) -> [String] {
+func buildForwardArgs(kind: AgentKindSpec, agentURL: URL, command: String?) -> [String] {
     let prefix = expandTemplateArgs(kind.forwardPrefix, agentURL: agentURL, command: command)
+    guard let command else { return prefix }
     if prefix.contains(command) {
         return prefix
     }
@@ -723,9 +844,9 @@ func promptYesNo(_ question: String) -> Bool {
 }
 
 func confirmBootstrap(agent: String, command: String) -> Bool {
-    fputs("executable not found in PATH: \(command)\n", stderr)
+    logError("make", "executable not found in PATH: \(command)")
     guard isatty(fileno(stdin)) != 0 else {
-        fputs("run ./cmd \(agentId(from: agent)) bootstrap to install it\n", stderr)
+        logError("make", "run ./cmd \(agentId(from: agent)) bootstrap to install it")
         exit(1)
     }
     return promptYesNo("Run ./cmd \(agentId(from: agent)) bootstrap now?")
@@ -736,14 +857,15 @@ func ensureInitExecutable(agent: String, kind: AgentKindSpec, args: [String]) {
     guard executablePath(command) == nil else { return }
 
     if !confirmBootstrap(agent: agent, command: command) {
-        fputs("aborted\n", stderr)
+        logError("make", "bootstrap aborted; agent directory was kept")
         exit(1)
     }
 
+    log("make", "running bootstrap for \(agent)")
     runBootstrapSteps(kind: kind)
 
     if executablePath(command) == nil {
-        fputs("executable still not found in PATH after bootstrap: \(command)\n", stderr)
+        logError("make", "executable still not found in PATH after bootstrap: \(command)")
         exit(1)
     }
 }
@@ -757,9 +879,9 @@ func hasBootstrapSteps(kind: AgentKindSpec) -> Bool {
 
 func confirmBootstrapWithoutMake(agent: String, kind: AgentKindSpec) -> Bool {
     let agentID = agentId(from: agent)
-    fputs("no make command for agent kind: \(kind.kind)\n", stderr)
+    logError("make", "no setup command for agent kind: \(kind.kind)")
     guard isatty(fileno(stdin)) != 0 else {
-        fputs("run ./cmd \(agentID) bootstrap to install manually\n", stderr)
+        logError("make", "run ./cmd \(agentID) bootstrap to install manually")
         exit(0)
     }
     return promptYesNo("Run ./cmd \(agentID) bootstrap now?")
@@ -776,12 +898,13 @@ func runInitCommand(agent: String, kind: AgentKindSpec, agentURL: URL, extra: [S
         }
         if hasBootstrapSteps(kind: kind) {
             if confirmBootstrapWithoutMake(agent: agent, kind: kind) {
+                log("make", "running bootstrap for \(agent)")
                 runBootstrapSteps(kind: kind)
             }
             exit(0)
         }
-        print("no make command for agent kind: \(kind.kind)")
-        print("run ./cmd \(agentId(from: agent)) bootstrap to install manually")
+        log("make", "no setup command for agent kind: \(kind.kind)")
+        log("make", "run ./cmd \(agentId(from: agent)) bootstrap to install manually")
         exit(0)
     }
     let args = expandTemplateArgs(kind.initArgs, agentURL: agentURL) + extra
@@ -790,6 +913,10 @@ func runInitCommand(agent: String, kind: AgentKindSpec, agentURL: URL, extra: [S
 }
 
 func handleStart(kind: AgentKindSpec, agentURL: URL, port: String?, extra: [String]) -> Never {
+    guard kind.hasStartCommand else {
+        fputs("start is not defined for agent kind: \(kind.kind)\n", stderr)
+        exit(1)
+    }
     applyPerAgentEnvironment(agent: agentURL.lastPathComponent)
     applyAgentEnvironment(kind, agentURL: agentURL)
     switchToAgentDirectory(agentURL)
@@ -801,6 +928,22 @@ func handleStart(kind: AgentKindSpec, agentURL: URL, port: String?, extra: [Stri
     execInteractive(args)
 }
 
+func handleSetup(agent: String, kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
+    runInitCommand(agent: agent, kind: kind, agentURL: agentURL, extra: extra)
+}
+
+func handleTui(kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
+    guard !kind.tuiArgs.isEmpty else {
+        fputs("tui is not defined for agent kind: \(kind.kind)\n", stderr)
+        exit(1)
+    }
+    applyPerAgentEnvironment(agent: agentURL.lastPathComponent)
+    applyAgentEnvironment(kind, agentURL: agentURL)
+    switchToAgentDirectory(agentURL)
+    let args = expandTemplateArgs(kind.tuiArgs, agentURL: agentURL) + extra
+    execInteractive(args)
+}
+
 func handleStop(kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
     if !kind.stopArgs.isEmpty {
         applyPerAgentEnvironment(agent: agentURL.lastPathComponent)
@@ -808,6 +951,11 @@ func handleStop(kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
         switchToAgentDirectory(agentURL)
         let args = expandTemplateArgs(kind.stopArgs, agentURL: agentURL) + extra
         execInteractive(args)
+    }
+
+    guard kind.hasStartCommand else {
+        fputs("stop is not defined for agent kind: \(kind.kind)\n", stderr)
+        exit(1)
     }
 
     let pattern = expandTemplateArgs(kind.startArgs, agentURL: agentURL).joined(separator: " ")
@@ -864,7 +1012,7 @@ func offerServiceManagerCleanup(targets: [String]) -> Never {
 
     let command = "./cmd infra uninstall \(targets.joined(separator: " "))"
     guard isatty(fileno(stdin)) != 0 else {
-        print("service-manager artifacts may still exist; run: \(command)")
+        log("remove", "service-manager artifacts may still exist; run: \(command)")
         exit(0)
     }
 
@@ -919,7 +1067,7 @@ func handleRemove(agentArgs: [String]) -> Never {
         }
         let reply = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         if reply != "y" && reply != "yes" {
-            fputs("aborted\n", stderr)
+            logError("remove", "aborted")
             exit(1)
         }
     }
@@ -930,21 +1078,200 @@ func handleRemove(agentArgs: [String]) -> Never {
         do {
             try FileManager.default.removeItem(at: agentURL)
         } catch {
-            fputs("failed to remove working dir \(agentURL.path): \(error)\n", stderr)
+            logError("remove", "failed to remove agent directory \(agentURL.path): \(error)")
             exit(1)
         }
-        print("removed working dir: \(agent)")
+        log("remove", "removed agent directory: \(agent)")
     }
 
     offerServiceManagerCleanup(targets: existingCleanupTargets(for: agents, removesLastAgent: removesLastAgent))
 }
 
-func forwardCommand(kind: AgentKindSpec, agentURL: URL, command: String, extra: [String]) -> Never {
+func renameKeyInSection(fileURL: URL, section targetSection: String, oldKey: String, newKey: String) throws -> Bool {
+    guard FileManager.default.fileExists(atPath: fileURL.path) else { return false }
+    let contents = try String(contentsOf: fileURL, encoding: .utf8)
+    var currentSection: String?
+    var changed = false
+    let lines = contents.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    let rewritten = lines.map { rawLine -> String in
+        let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") && trimmed.count >= 3 {
+            currentSection = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+            return rawLine
+        }
+        guard currentSection == targetSection, let equalsIndex = rawLine.firstIndex(of: "=") else {
+            return rawLine
+        }
+        let key = String(rawLine[..<equalsIndex]).trimmingCharacters(in: .whitespaces)
+        guard key == oldKey else { return rawLine }
+        let leading = rawLine[..<equalsIndex].prefix { $0.isWhitespace }
+        changed = true
+        return "\(leading)\(newKey)\(rawLine[equalsIndex...])"
+    }.joined(separator: "\n")
+
+    if changed {
+        try rewritten.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+    return changed
+}
+
+func moveIfPresent(from source: URL, to destination: URL) throws -> Bool {
+    guard FileManager.default.fileExists(atPath: source.path) else { return false }
+    if FileManager.default.fileExists(atPath: destination.path) {
+        throw NSError(domain: "cmd", code: 1, userInfo: [NSLocalizedDescriptionKey: "destination already exists: \(destination.path)"])
+    }
+    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.moveItem(at: source, to: destination)
+    return true
+}
+
+func referenceMatches(in fileURL: URL, needles: [String]) -> [String] {
+    guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
+    var matches: [String] = []
+    let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+    for (index, line) in lines.enumerated() {
+        if needles.contains(where: { !$0.isEmpty && line.contains($0) }) {
+            matches.append("\(fileURL.path):\(index + 1)")
+        }
+    }
+    return matches
+}
+
+func scanRenamedAgentForReferences(agentURL: URL, oldID: String, oldName: String, newName: String) -> [String] {
+    let oldAbsolutePath = agentsURL.appendingPathComponent(oldName, isDirectory: true).path
+    let oldRelativePath = "agents/\(oldName)"
+    let needles = [oldAbsolutePath, oldRelativePath, oldName, "/tty/\(oldID)/"]
+    var findings: [String] = []
+    guard let enumerator = FileManager.default.enumerator(
+        at: agentURL,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return []
+    }
+    for case let fileURL as URL in enumerator {
+        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey])
+        guard values?.isRegularFile == true else { continue }
+        findings += referenceMatches(in: fileURL, needles: needles)
+    }
+    return findings
+}
+
+func handleRename(args: [String]) -> Never {
+    let confirmArgs: Set<String> = ["-y", "--yes"]
+    let unknownOptions = args.filter { $0.hasPrefix("-") && !confirmArgs.contains($0) }
+    if !unknownOptions.isEmpty {
+        fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+        exit(1)
+    }
+
+    let positional = args.filter { !confirmArgs.contains($0) }
+    let autoConfirm = args.contains(where: { confirmArgs.contains($0) })
+    guard positional.count == 2 else {
+        fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+        exit(1)
+    }
+
+    let oldArg = positional[0]
+    let newID = positional[1]
+    guard isBareAgentId(newID) else {
+        fputs("new agent id must be a 3-digit id: \(newID)\n", stderr)
+        exit(1)
+    }
+
+    let oldName = resolveAgentName(oldArg)
+    let oldID = agentId(from: oldName)
+    guard oldID != newID else {
+        fputs("old and new agent ids are the same: \(oldID)\n", stderr)
+        exit(1)
+    }
+    guard existingAgentNames().allSatisfy({ agentId(from: $0) != newID }) else {
+        fputs("agent id already exists: \(newID)\n", stderr)
+        exit(1)
+    }
+    guard let kindName = agentKindName(from: oldName) else {
+        fputs("unable to determine agent kind for: \(oldName)\n", stderr)
+        exit(1)
+    }
+
+    let newName = "\(newID)-\(kindName)"
+    let oldURL = agentsURL.appendingPathComponent(oldName, isDirectory: true)
+    let newURL = agentsURL.appendingPathComponent(newName, isDirectory: true)
+    requireAgentDir(agent: oldName, agentURL: oldURL)
+    guard !FileManager.default.fileExists(atPath: newURL.path) else {
+        fputs("destination already exists: \(newURL.path)\n", stderr)
+        exit(1)
+    }
+
+    if !autoConfirm {
+        guard isatty(fileno(stdin)) != 0 else {
+            fputs("non-interactive: pass -y or --yes to confirm rename\n", stderr)
+            exit(1)
+        }
+        fputs("Rename agent '\(oldName)' to '\(newName)'? [y/N]: ", stderr)
+        let reply = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if reply != "y" && reply != "yes" {
+            logError("rename", "aborted")
+            exit(1)
+        }
+    }
+
+    var updates: [String] = []
+    do {
+        try FileManager.default.moveItem(at: oldURL, to: newURL)
+        updates.append("renamed \(oldURL.path) -> \(newURL.path)")
+
+        if try renameKeyInSection(fileURL: repoConfigURL, section: "agent-ports", oldKey: oldID, newKey: newID) {
+            updates.append("updated \(repoConfigURL.path) [agent-ports]")
+        }
+
+        let oldEnvURL = customEnvURL.appendingPathComponent("agents", isDirectory: true).appendingPathComponent("\(oldID).env")
+        let newEnvURL = customEnvURL.appendingPathComponent("agents", isDirectory: true).appendingPathComponent("\(newID).env")
+        if try moveIfPresent(from: oldEnvURL, to: newEnvURL) {
+            updates.append("moved \(oldEnvURL.path) -> \(newEnvURL.path)")
+        }
+    } catch {
+        logError("rename", "failed to rename agent: \(error.localizedDescription)")
+        exit(1)
+    }
+
+    for update in updates {
+        log("rename", update)
+    }
+
+    let findings = scanRenamedAgentForReferences(agentURL: newURL, oldID: oldID, oldName: oldName, newName: newName)
+    if findings.isEmpty {
+        log("rename", "no old id/path references found in \(newName)")
+    } else {
+        log("rename", "warning: old id/path references remain:")
+        for finding in findings {
+            logDetail(finding)
+        }
+    }
+
+    let command = "./cmd infra uninstall \(oldID) && ./cmd infra install \(newID)"
+    log("rename", "service-manager artifacts may need refresh; run: \(command)")
+    exit(0)
+}
+
+func forwardCommand(kind: AgentKindSpec, agentURL: URL, command: String?, extra: [String]) -> Never {
+    if command == nil && !kind.tuiArgs.isEmpty {
+        handleTui(kind: kind, agentURL: agentURL, extra: extra)
+    }
     applyPerAgentEnvironment(agent: agentURL.lastPathComponent)
     applyAgentEnvironment(kind, agentURL: agentURL)
     switchToAgentDirectory(agentURL)
     let args = buildForwardArgs(kind: kind, agentURL: agentURL, command: command) + extra
     execInteractive(args)
+}
+
+func forwardServiceCommand(service: ServiceSpec, command: String?, extra: [String]) -> Never {
+    guard let command else {
+        fputs("usage: cmd <service-id> <native-command...>\n", stderr)
+        exit(1)
+    }
+
+    execInteractive([service.bin, command] + extra)
 }
 
 func requireAgentDir(agent: String, agentURL: URL) {
@@ -967,11 +1294,17 @@ case .globalMake(let agentArg, let extra):
         exit(1)
     }
     handleInit(agent: resolvedName, agentURL: agentURL, kind: kind, extra: extra)
+case .globalRename(let args):
+    handleRename(args: args)
 case .globalRemove(let args):
     handleRemove(agentArgs: args)
 case .globalInfra(let subcommand, let extra):
     handleInfra(subcommand: subcommand, extra: extra)
 case .agent(let agentArg, let command, let extra):
+    if let service = serviceSpecsByID[agentArg] {
+        forwardServiceCommand(service: service, command: command, extra: extra)
+    }
+
     let agentName = resolveAgentName(agentArg)
     let agentURL = agentsURL.appendingPathComponent(agentName, isDirectory: true)
     let port = portFor(agent: agentName)
@@ -983,16 +1316,20 @@ case .agent(let agentArg, let command, let extra):
 
     requireAgentDir(agent: agentName, agentURL: agentURL)
 
-    if let agentCommand = AgentCommand(rawValue: command) {
+    if let command, let agentCommand = AgentCommand(rawValue: command) {
         switch agentCommand {
         case .bootstrap:
             handleBootstrap(kind: kind, agentURL: agentURL)
         case .edit:
             handleEdit(agentURL: agentURL)
+        case .setup:
+            handleSetup(agent: agentName, kind: kind, agentURL: agentURL, extra: extra)
         case .start:
             handleStart(kind: kind, agentURL: agentURL, port: port, extra: extra)
         case .stop:
             handleStop(kind: kind, agentURL: agentURL, extra: extra)
+        case .tui:
+            handleTui(kind: kind, agentURL: agentURL, extra: extra)
         }
     } else {
         forwardCommand(kind: kind, agentURL: agentURL, command: command, extra: extra)
