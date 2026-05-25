@@ -1,0 +1,54 @@
+# /etc/sudoers.d/aelab — installed by `./ae infra install`.
+# Validate after editing: sudo visudo -c -f /etc/sudoers.d/aelab
+
+Cmnd_Alias AELAB_LAUNCHCTL = \
+    /bin/launchctl bootout system /Library/LaunchDaemons/*, \
+    /bin/launchctl bootstrap system /Library/LaunchDaemons/*, \
+    /bin/launchctl enable system/*, \
+    /bin/launchctl disable system/*, \
+    /bin/launchctl kickstart -k system/*
+
+Cmnd_Alias AELAB_SYSTEMCTL = \
+    /bin/systemctl enable --now *, \
+    /usr/bin/systemctl enable --now *, \
+    /bin/systemctl disable --now *, \
+    /usr/bin/systemctl disable --now *, \
+    /bin/systemctl daemon-reload, \
+    /usr/bin/systemctl daemon-reload
+
+Cmnd_Alias AELAB_INSTALL = \
+    /usr/bin/install -m 0644 __AELAB_ROOT__/infra/generated/* /Library/LaunchDaemons/*, \
+    /usr/bin/install -m 0644 __AELAB_ROOT__/infra/generated/* /etc/aelab/*, \
+    /usr/bin/install -m 0644 __AELAB_ROOT__/infra/generated/* /etc/systemd/system/*, \
+    /usr/bin/install -o * -g * -m 0664 /dev/null __AELAB_ROOT__/*, \
+    /usr/bin/install -o root -g admin -m 0440 __AELAB_ROOT__/infra/generated/sudoers.aelab /etc/sudoers.d/aelab, \
+    /usr/bin/install -o root -g wheel -m 0440 __AELAB_ROOT__/infra/generated/sudoers.aelab /etc/sudoers.d/aelab, \
+    /usr/bin/install -o root -g root  -m 0440 __AELAB_ROOT__/infra/generated/sudoers.aelab /etc/sudoers.d/aelab
+
+Cmnd_Alias AELAB_RM = \
+    /bin/rm -f /Library/LaunchDaemons/*, \
+    /usr/bin/rm -f /Library/LaunchDaemons/*, \
+    /bin/rm -f /etc/systemd/system/*, \
+    /usr/bin/rm -f /etc/systemd/system/*, \
+    /bin/rm -f /etc/sudoers.d/aelab, \
+    /usr/bin/rm -f /etc/sudoers.d/aelab
+
+Cmnd_Alias AELAB_REPAIR = \
+    /usr/sbin/chown * __AELAB_ROOT__/*, \
+    /usr/sbin/chown -R * __AELAB_ROOT__/*, \
+    /bin/chown * __AELAB_ROOT__/*, \
+    /bin/chown -R * __AELAB_ROOT__/*, \
+    /usr/sbin/chgrp * __AELAB_ROOT__/*, \
+    /usr/bin/chgrp * __AELAB_ROOT__/*, \
+    /bin/chgrp * __AELAB_ROOT__/*, \
+    /usr/bin/chmod g+rwxs __AELAB_ROOT__/*, \
+    /usr/bin/chmod g+rw __AELAB_ROOT__/*, \
+    /usr/bin/chmod +a * __AELAB_ROOT__/*, \
+    /bin/chmod g+rwxs __AELAB_ROOT__/*, \
+    /bin/chmod g+rw __AELAB_ROOT__/*, \
+    /bin/chmod +a * __AELAB_ROOT__/*
+
+Cmnd_Alias AELAB_VISUDO = \
+    /usr/sbin/visudo -c -f /etc/sudoers.d/aelab
+
+%__AELAB_SUDO_GROUP__ ALL=(root) NOPASSWD: AELAB_LAUNCHCTL, AELAB_SYSTEMCTL, AELAB_INSTALL, AELAB_RM, AELAB_REPAIR, AELAB_VISUDO

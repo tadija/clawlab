@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
-CLAWLAB_LOG_PREFIX="start"
+AELAB_LOG_PREFIX="start"
 load_host_env
 
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
-CLAWLAB_USER="${CLAWLAB_USER:-}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
+AELAB_USER="${AELAB_USER:-}"
 
-if [[ -z "$CLAWLAB_USER" ]]; then
-  echo "CLAWLAB_USER is not set; set it in config/custom/host/.env"
+if [[ -z "$AELAB_USER" ]]; then
+  echo "AELAB_USER is not set; set it in config/custom/host/.env"
   exit 1
 fi
 
@@ -21,8 +21,8 @@ Usage:
   start.sh [service-or-agent...]
 
 Examples:
-  ./commands/start.sh tailscale caddy 000 004 007
-  CLAWLAB_SERVICES="tailscale caddy" CLAWLAB_AGENTS="000 004 007" ./commands/start.sh
+  ./commands/start.sh core 000 004 007
+  AELAB_SERVICES="core" AELAB_AGENTS="000 004 007" ./commands/start.sh
 EOF
 }
 
@@ -49,8 +49,8 @@ start_launchd_agent() {
   local label
   local plist
   label="$(service_label_for_agent "$agent_id")"
-  log_verbose "refreshing agent service-manager artifact for $agent_id"
-  plist="$(install_launchd_agent_plist "$agent_id" "$CLAWLAB_ROOT" "$CLAWLAB_USER")"
+  log --verbose "refreshing agent service-manager artifact for $agent_id"
+  plist="$(install_launchd_agent_plist "$agent_id" "$AELAB_ROOT" "$AELAB_USER")"
   sudo launchctl bootout system "$plist" >/dev/null 2>&1 || true
   sudo launchctl enable "system/$label"
   sudo launchctl bootstrap system "$plist"
@@ -61,8 +61,8 @@ start_service() {
   local service_id="$1"
 
   load_service_definition "$service_id"
-  repair_clawlab_service_permissions
-  log_verbose "refreshing service-manager artifact for $service_id"
+  repair_aelab_service_permissions
+  log --verbose "refreshing service-manager artifact for $service_id"
   if is_linux; then
     install_systemd_service_unit "$service_id" >/dev/null
     sudo systemctl daemon-reload
@@ -78,8 +78,8 @@ start_service() {
 prepare_service_start() {
   local service_id="$1"
   run_service_installer "$service_id"
-  if [[ "$service_id" == "dash-http" ]]; then
-    bash "$(repo_root)/infra/commands/render.sh" dash
+  if [[ "$service_id" == "core-http" ]]; then
+    bash "$(repo_root)/infra/commands/render.sh" front
   elif [[ "$service_id" == "caddy" ]]; then
     bash "$(repo_root)/infra/commands/render.sh" caddy
   fi
@@ -88,7 +88,6 @@ prepare_service_start() {
 main() {
   local -a requested=()
   local item
-  local managed_service_id
 
   while IFS= read -r item; do
     [[ -n "$item" ]] || continue
@@ -97,8 +96,7 @@ main() {
 
   if ((${#requested[@]} == 0)); then
     usage
-    echo "No services requested."
-    echo "Set CLAWLAB_SERVICES or CLAWLAB_AGENTS to use env defaults."
+    print_no_requested_items_hint
     exit 0
   fi
 
@@ -107,18 +105,19 @@ main() {
   local agent_template_installed=0
   for item in "${requested[@]}"; do
     index=$((index + 1))
-    log_verbose "[$index/$total] starting $item"
+    log --verbose "[$index/$total] starting $item"
     if is_agent_id "$item"; then
       known_agent_kind_for_id "$item" >/dev/null || continue
       if ! agent_is_managed "$item"; then
-        log_verbose "[$index/$total] skipped $item [interactive]"
+        log --verbose "[$index/$total] skipped $item [interactive]"
+        log "skipped agent $item [interactive]"
         continue
       fi
-      repair_clawlab_agent_permissions "$item" "$CLAWLAB_USER"
+      repair_aelab_agent_permissions "$item" "$AELAB_USER"
       if is_linux; then
         if ((agent_template_installed == 0)); then
-          log_verbose "refreshing agent service-manager artifact"
-          install_systemd_agent_unit_template "$CLAWLAB_ROOT" "$CLAWLAB_USER" >/dev/null
+          log --verbose "refreshing agent service-manager artifact"
+          install_systemd_agent_unit_template "$AELAB_ROOT" "$AELAB_USER" >/dev/null
           sudo systemctl daemon-reload
           agent_template_installed=1
         fi
@@ -130,24 +129,21 @@ main() {
         exit 1
       fi
     elif service_definition_exists "$item"; then
-      if [[ "$item" == "caddy" ]]; then
-        while IFS= read -r managed_service_id; do
-          [[ -n "$managed_service_id" ]] || continue
-          prepare_service_start "$managed_service_id"
-          start_service "$managed_service_id"
-        done < <(caddy_managed_service_ids)
-      fi
-
       prepare_service_start "$item"
       start_service "$item"
     else
       echo "unknown service or agent id: $item"
       exit 1
     fi
-    log_verbose "[$index/$total] finished $item"
+    if is_agent_id "$item"; then
+      log "started agent $item"
+    else
+      log "started service $item"
+    fi
+    log --verbose "[$index/$total] finished $item"
   done
 
-  log_verbose "completed"
+  log --verbose "completed"
 }
 
 main "$@"

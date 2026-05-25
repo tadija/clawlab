@@ -14,15 +14,18 @@ agents/**/devices/
 agents/**/identity/
 agents/**/logs/
 agents/**/media/
+agents/**/npm/
 agents/**/telegram/
 agents/**/*.bak*
-agents/**/runs.sqlite*
+agents/**/*.sqlite*
 agents/**/auth-profiles.json
 agents/**/auth-state.json
 agents/**/exec-approvals.json
 agents/**/models.json
 agents/**/plugin-runtime-deps
 agents/**/sessions.json*
+agents/**/*.trajectory.jsonl
+agents/**/*.trajectory-path.json
 agents/**/update-check.json
 agents/**/workspace-state.json
 agents/**/workspace/*audio*
@@ -46,6 +49,9 @@ agents/**/Library
 agents/**/.mercury/daemon*
 agents/**/.mercury/memory
 agents/**/.mercury/token-usage.json
+
+# moltis
+agents/**/logs.jsonl
 
 # nullclaw
 agents/**/memory.db*
@@ -73,7 +79,7 @@ agents/**/*.db*
 config/custom/host/.env
 config/custom/env/*.env
 config/custom/env/**/*.env
-config/custom/override/**/dash-tty.env
+config/custom/override/**/core-tty.env
 infra/generated/
 state/
 
@@ -83,4 +89,3 @@ state/
 shared/icloud
 shared/gdrive
 shared/projects
-shared/repos

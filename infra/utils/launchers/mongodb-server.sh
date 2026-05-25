@@ -2,8 +2,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-repo_root="$(cd "$script_dir/../.." && pwd)"
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$repo_root}"
+repo_root="$(cd "$script_dir/../../.." && pwd)"
+AELAB_ROOT="${AELAB_ROOT:-$repo_root}"
 
 port=27017
 while [[ $# -gt 0 ]]; do
@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-state_root="$CLAWLAB_ROOT/state/runtimes/mongodb"
+state_root="$AELAB_ROOT/state/runtimes/mongodb"
 data_dir="$state_root/data"
 
 mkdir -p "$data_dir"

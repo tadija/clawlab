@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$0")/../.." && pwd)/commands/core.sh"
+
 if command -v nanobot >/dev/null 2>&1; then
   echo "nanobot already installed"
   exit 0

@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
-CLAWLAB_LOG_PREFIX="uninstall"
+AELAB_LOG_PREFIX="uninstall"
 load_host_env
 
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 
 remove_systemd_unit() {
   local unit_name="$1"
@@ -72,9 +72,9 @@ remove_launchd_plist() {
 }
 
 main() {
+  local explicit_args=$#
   local -a requested=()
   local item
-  local managed_service_id
   local total
   local index=0
   local removed_any=0
@@ -86,7 +86,7 @@ main() {
   done < <(resolve_requested_items "$@")
 
   if ((${#requested[@]} == 0)); then
-    echo "No services requested."
+    print_no_requested_items_hint
     exit 0
   fi
 
@@ -95,6 +95,14 @@ main() {
   for item in "${requested[@]}"; do
     index=$((index + 1))
     log "[$index/$total] starting $item"
+
+    if [[ "$item" == "sudoers" ]]; then
+      if uninstall_sudoers_aelab; then
+        removed_any=1
+      fi
+      log "[$index/$total] finished $item"
+      continue
+    fi
 
     if is_agent_id "$item"; then
       known_agent_kind_for_id "$item" >/dev/null || continue
@@ -125,25 +133,6 @@ main() {
         echo "unsupported platform: $(uname -s)"
         exit 1
       fi
-      if [[ "$item" == "caddy" ]]; then
-        while IFS= read -r managed_service_id; do
-          [[ -n "$managed_service_id" ]] || continue
-          load_service_definition "$managed_service_id"
-          if is_linux; then
-            if remove_systemd_unit "$(service_systemd_name)" "$(service_systemd_unit_path)"; then
-              removed_any=1
-              systemd_reload=1
-            fi
-          elif is_macos; then
-            if remove_launchd_plist "$(service_launchd_label)" "$(service_launchd_plist_path)"; then
-              removed_any=1
-            fi
-          else
-            echo "unsupported platform: $(uname -s)"
-            exit 1
-          fi
-        done < <(caddy_managed_service_ids)
-      fi
     else
       echo "unknown service or agent id: $item"
       exit 1
@@ -169,6 +158,12 @@ main() {
 
   if is_linux && ((systemd_reload == 1)); then
     sudo systemctl daemon-reload
+  fi
+
+  if ((explicit_args == 0)); then
+    if uninstall_sudoers_aelab; then
+      removed_any=1
+    fi
   fi
 
   if ((removed_any == 0)); then

@@ -2,20 +2,32 @@
 
 set -euo pipefail
 
-clawlab_script_dir() {
+aelab_script_dir() {
   cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 }
 
 infra_root() {
-  cd "$(clawlab_script_dir)/.." && pwd
+  cd "$(aelab_script_dir)/.." && pwd
 }
 
 repo_root() {
   cd "$(infra_root)/.." && pwd
 }
 
-clawlab_root() {
+aelab_root() {
   repo_root
+}
+
+aelab_name() {
+  printf '%s' "aelab"
+}
+
+aelab_launchd_domain() {
+  printf '%s' "net.tadija.$(aelab_name)"
+}
+
+aelab_caddy_import_dir() {
+  printf '/etc/%s' "$(aelab_name)"
 }
 
 is_macos() {
@@ -41,7 +53,7 @@ service_manager() {
 }
 
 launchd_label_prefix() {
-  printf '%s' "net.tadija.clawlab"
+  aelab_launchd_domain
 }
 
 render_template() {
@@ -96,25 +108,21 @@ is_agent_id() {
 requested_items_from_env() {
   local -a items=()
 
-  if [[ -n "${CLAWLAB_SERVICES:-}" ]]; then
+  if [[ -n "${AELAB_SERVICES:-}" ]]; then
     local services
-    services="$(trim_commas "$CLAWLAB_SERVICES")"
-    # shellcheck disable=SC2206
-    local -a names=($services)
+    services="$(trim_commas "$AELAB_SERVICES")"
     local name
-    for name in "${names[@]}"; do
+    for name in $services; do
       [[ -n "$name" ]] || continue
       items+=("$name")
     done
   fi
 
-  if [[ -n "${CLAWLAB_AGENTS:-}" ]]; then
+  if [[ -n "${AELAB_AGENTS:-}" ]]; then
     local agents
-    agents="$(trim_commas "$CLAWLAB_AGENTS")"
-    # shellcheck disable=SC2206
-    local -a ids=($agents)
+    agents="$(trim_commas "$AELAB_AGENTS")"
     local id
-    for id in "${ids[@]}"; do
+    for id in $agents; do
       [[ -n "$id" ]] || continue
       items+=("$id")
     done
@@ -131,10 +139,8 @@ requested_agent_ids_from_env() {
   local agents
   local agent_id
 
-  agents="$(trim_commas "${CLAWLAB_AGENTS:-}")"
-  # shellcheck disable=SC2206
-  local -a ids=($agents)
-  for agent_id in "${ids[@]}"; do
+  agents="$(trim_commas "${AELAB_AGENTS:-}")"
+  for agent_id in $agents; do
     [[ -n "$agent_id" ]] || continue
     if is_agent_id "$agent_id"; then
       printf '%s\n' "$agent_id"
@@ -145,26 +151,56 @@ requested_agent_ids_from_env() {
 requested_service_ids_from_env() {
   local services
   local service_id
+  local member
 
-  services="$(trim_commas "${CLAWLAB_SERVICES:-}")"
-  # shellcheck disable=SC2206
-  local -a ids=($services)
-  for service_id in "${ids[@]}"; do
+  services="$(trim_commas "${AELAB_SERVICES:-}")"
+  for service_id in $services; do
     [[ -n "$service_id" ]] || continue
-    printf '%s\n' "$service_id"
-  done
+    if service_definition_exists "$service_id" && service_is_group "$service_id"; then
+      while IFS= read -r member; do
+        [[ -n "$member" ]] || continue
+        printf '%s\n' "$member"
+      done < <(service_group_member_ids "$service_id")
+    else
+      printf '%s\n' "$service_id"
+    fi
+  done | awk '!seen[$0]++'
+}
+
+requested_service_ids_with_groups_from_env() {
+  local services
+  local service_id
+  local member
+
+  services="$(trim_commas "${AELAB_SERVICES:-}")"
+  for service_id in $services; do
+    [[ -n "$service_id" ]] || continue
+    if service_definition_exists "$service_id" && service_is_group "$service_id"; then
+      printf '%s\n' "$service_id"
+      while IFS= read -r member; do
+        [[ -n "$member" ]] || continue
+        printf '%s\n' "$member"
+      done < <(service_group_member_ids "$service_id")
+    else
+      printf '%s\n' "$service_id"
+    fi
+  done | awk '!seen[$0]++'
 }
 
 service_requested_from_env() {
   local service_id="$1"
+  local member
   local services
   local name
 
-  services="$(trim_commas "${CLAWLAB_SERVICES:-}")"
-  # shellcheck disable=SC2206
-  local -a names=($services)
-  for name in "${names[@]}"; do
+  services="$(trim_commas "${AELAB_SERVICES:-}")"
+  for name in $services; do
     [[ "$name" == "$service_id" ]] && return 0
+    if service_definition_exists "$name" && service_is_group "$name"; then
+      while IFS= read -r member; do
+        [[ "$member" == "$service_id" ]] && return 0
+      done < <(service_group_member_ids "$name")
+    fi
   done
 
   return 1
@@ -179,6 +215,9 @@ expand_requested_item() {
   local item="$1"
 
   case "$item" in
+    repo)
+      printf '%s\n' "$item"
+      ;;
     agents)
       requested_agent_ids_from_env
       ;;
@@ -186,7 +225,11 @@ expand_requested_item() {
       requested_service_ids_from_env
       ;;
     *)
-      printf '%s\n' "$item"
+      if service_definition_exists "$item" && service_is_group "$item"; then
+        service_group_member_ids "$item"
+      else
+        printf '%s\n' "$item"
+      fi
       ;;
   esac
 }
@@ -205,7 +248,7 @@ resolve_requested_items() {
     requested=("$@")
   fi
 
-  for item in "${requested[@]}"; do
+  for item in "${requested[@]+"${requested[@]}"}"; do
     item="$(normalize_requested_item "$item")"
     [[ -n "$item" ]] || continue
     while IFS= read -r expanded; do
@@ -300,38 +343,50 @@ load_host_env() {
   fi
 }
 
-clawlab_group() {
-  if [[ -n "${CLAWLAB_GROUP:-}" ]]; then
-    printf '%s' "$CLAWLAB_GROUP"
-  elif [[ -n "${CLAWLAB_USER:-}" ]]; then
-    id -gn "$CLAWLAB_USER" 2>/dev/null || id -gn
+aelab_group() {
+  if [[ -n "${AELAB_GROUP:-}" ]]; then
+    printf '%s' "$AELAB_GROUP"
+  elif [[ -n "${AELAB_USER:-}" ]]; then
+    id -gn "$AELAB_USER" 2>/dev/null || id -gn
   else
     id -gn
   fi
 }
 
 verbose_enabled() {
-  case "${CLAWLAB_LOG_VERBOSE:-}" in
+  case "${AELAB_LOG_VERBOSE:-}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 log() {
-  if [[ -n "${CLAWLAB_LOG_PREFIX:-}" ]]; then
-    printf '[%s] %s\n' "$CLAWLAB_LOG_PREFIX" "$1"
+  local verbose=0
+  case "${1:-}" in
+    --verbose)
+      verbose=1
+      shift
+      ;;
+    --*)
+      printf 'unknown log option: %s\n' "$1" >&2
+      return 2
+      ;;
+  esac
+
+  if ((verbose == 1)) && ! verbose_enabled; then
+    return 0
+  fi
+
+  if [[ -n "${AELAB_LOG_PREFIX:-}" ]]; then
+    printf '[%s] %s\n' "$AELAB_LOG_PREFIX" "$1"
   else
     printf '%s\n' "$1" >&2
   fi
 }
 
-log_error() {
-  log "$1" >&2
-}
-
-log_verbose() {
-  verbose_enabled || return 0
-  log "$1"
+print_no_requested_items_hint() {
+  echo "No agents or services requested."
+  echo "Check config/custom/host/.env for AELAB_AGENTS and AELAB_SERVICES."
 }
 
 service_manifest_dir() {
@@ -369,6 +424,66 @@ service_templates_dir() {
   printf '%s/infra/templates' "$(repo_root)"
 }
 
+sudoers_template_path() {
+  if visudo -V 2>/dev/null | head -n 1 | grep -qi 'visudo-rs'; then
+    printf '%s/sudo-rs.aelab' "$(service_templates_dir)"
+  else
+    printf '%s/sudoers.aelab' "$(service_templates_dir)"
+  fi
+}
+
+aelab_sudo_group() {
+  if is_macos; then
+    printf 'admin'
+  elif getent group wheel >/dev/null 2>&1; then
+    printf 'wheel'
+  else
+    printf 'sudo'
+  fi
+}
+
+render_sudoers_aelab() {
+  local dest="$1"
+  render_template "$(sudoers_template_path)" "$dest" \
+    __AELAB_ROOT__ "${AELAB_ROOT:-$(aelab_root)}" \
+    __AELAB_SUDO_GROUP__ "$(aelab_sudo_group)"
+}
+
+install_sudoers_aelab() {
+  local dest="/etc/sudoers.d/aelab"
+  if [[ -f "$dest" ]]; then
+    log --verbose "sudoers file already present at $dest (remove it to refresh)"
+    return 0
+  fi
+
+  local generated_dir
+  generated_dir="$(repo_root)/infra/generated"
+  mkdir -p "$generated_dir"
+  local rendered="$generated_dir/sudoers.aelab"
+  render_sudoers_aelab "$rendered"
+
+  local group_owner
+  group_owner="$(is_linux && printf 'root' || printf 'wheel')"
+
+  log "installing $dest (one-time sudo prompt)"
+  sudo install -o root -g "$group_owner" -m 0440 "$rendered" "$dest"
+
+  if ! sudo visudo -c -f "$dest" >/dev/null; then
+    echo "ERROR: $dest failed validation; removing"
+    sudo rm -f "$dest"
+    return 1
+  fi
+  log "sudoers installed; subsequent start/stop runs won't prompt"
+}
+
+uninstall_sudoers_aelab() {
+  local dest="/etc/sudoers.d/aelab"
+  [[ -f "$dest" ]] || return 1
+  log "removing $dest"
+  sudo rm -f "$dest"
+  return 0
+}
+
 service_manifest_path() {
   local service_id="$1"
   printf '%s/%s.env' "$(service_manifest_dir)" "$service_id"
@@ -394,61 +509,61 @@ custom_agent_kind_manifest_path() {
 }
 
 reset_service_definition() {
-  unset CLAWLAB_SERVICE_ID || true
-  unset CLAWLAB_SERVICE_DESCRIPTION || true
-  unset CLAWLAB_SERVICE_BIN || true
-  unset CLAWLAB_SERVICE_BREW_TAPS || true
-  unset CLAWLAB_SERVICE_BREW_PACKAGES || true
-  unset CLAWLAB_SERVICE_BREW_CASKS || true
-  unset CLAWLAB_SERVICE_BREW_PACKAGES_MACOS_ARM64 || true
-  unset CLAWLAB_SERVICE_BREW_CASKS_MACOS_ARM64 || true
-  unset CLAWLAB_SERVICE_INSTALL_OPTIONAL || true
-  unset CLAWLAB_SERVICE_SYSTEMD_NAME || true
-  unset CLAWLAB_SERVICE_LAUNCHD_LABEL || true
-  unset CLAWLAB_SERVICE_ARGS || true
-  unset CLAWLAB_SERVICE_RELOAD_ARGS || true
-  unset CLAWLAB_SERVICE_STOP_COMMAND || true
-  unset CLAWLAB_SERVICE_STDOUT || true
-  unset CLAWLAB_SERVICE_STDERR || true
-  unset CLAWLAB_SERVICE_ENV || true
-  unset CLAWLAB_SERVICE_AFTER || true
-  unset CLAWLAB_SERVICE_WANTS || true
-  unset CLAWLAB_SERVICE_RESTART || true
-  unset CLAWLAB_SERVICE_RESTART_SEC || true
-  unset CLAWLAB_SERVICE_DIR || true
-  unset CLAWLAB_SERVICE_STATE_DIRS || true
-  unset CLAWLAB_SERVICE_USER || true
-  unset CLAWLAB_SERVICE_GROUP || true
-  unset CLAWLAB_SERVICE_WORKING_DIRECTORY || true
-  unset CLAWLAB_SERVICE_SYSTEMD_ENVIRONMENT_FILE || true
-  unset CLAWLAB_SERVICE_SYSTEMD_AMBIENT_CAPABILITIES || true
-  unset CLAWLAB_SERVICE_SYSTEMD_CAPABILITY_BOUNDING_SET || true
-  unset CLAWLAB_SERVICE_SYSTEMD_NO_NEW_PRIVILEGES || true
-  unset CLAWLAB_SERVICE_SYSTEMD_LIMIT_NOFILE || true
-  unset CLAWLAB_SERVICE_INSTALL_KIND || true
-  unset CLAWLAB_SERVICE_INSTALL_SCRIPT || true
-  unset CLAWLAB_SERVICE_CADDY_ROUTE || true
-  unset CLAWLAB_SERVICE_CADDY_UPSTREAM || true
-  unset CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM || true
-  unset CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS || true
-  unset CLAWLAB_SERVICE_PORT || true
+  unset AELAB_SERVICE_ID || true
+  unset AELAB_SERVICE_DESCRIPTION || true
+  unset AELAB_SERVICE_BIN || true
+  unset AELAB_SERVICE_BREW_TAPS || true
+  unset AELAB_SERVICE_BREW_PACKAGES || true
+  unset AELAB_SERVICE_BREW_CASKS || true
+  unset AELAB_SERVICE_BREW_PACKAGES_MACOS_ARM64 || true
+  unset AELAB_SERVICE_BREW_CASKS_MACOS_ARM64 || true
+  unset AELAB_SERVICE_INSTALL_OPTIONAL || true
+  unset AELAB_SERVICE_SYSTEMD_NAME || true
+  unset AELAB_SERVICE_LAUNCHD_LABEL || true
+  unset AELAB_SERVICE_ARGS || true
+  unset AELAB_SERVICE_RELOAD_ARGS || true
+  unset AELAB_SERVICE_STOP_COMMAND || true
+  unset AELAB_SERVICE_STDOUT || true
+  unset AELAB_SERVICE_STDERR || true
+  unset AELAB_SERVICE_ENV || true
+  unset AELAB_SERVICE_AFTER || true
+  unset AELAB_SERVICE_WANTS || true
+  unset AELAB_SERVICE_RESTART || true
+  unset AELAB_SERVICE_RESTART_SEC || true
+  unset AELAB_SERVICE_DIR || true
+  unset AELAB_SERVICE_STATE_DIRS || true
+  unset AELAB_SERVICE_USER || true
+  unset AELAB_SERVICE_GROUP || true
+  unset AELAB_SERVICE_WORKING_DIRECTORY || true
+  unset AELAB_SERVICE_SYSTEMD_ENVIRONMENT_FILE || true
+  unset AELAB_SERVICE_SYSTEMD_AMBIENT_CAPABILITIES || true
+  unset AELAB_SERVICE_SYSTEMD_CAPABILITY_BOUNDING_SET || true
+  unset AELAB_SERVICE_SYSTEMD_NO_NEW_PRIVILEGES || true
+  unset AELAB_SERVICE_SYSTEMD_LIMIT_NOFILE || true
+  unset AELAB_SERVICE_INSTALL_KIND || true
+  unset AELAB_SERVICE_INSTALL_SCRIPT || true
+  unset AELAB_SERVICE_GROUP_MEMBERS || true
+  unset AELAB_SERVICE_CADDY_ROUTE || true
+  unset AELAB_SERVICE_CADDY_UPSTREAM || true
+  unset AELAB_SERVICE_PORT || true
 }
 
 reset_agent_kind_definition() {
-  unset CLAWLAB_AGENT_KIND || true
-  unset CLAWLAB_AGENT_HOME_ENV || true
-  unset CLAWLAB_AGENT_SETUP_ARGS || true
-  unset CLAWLAB_AGENT_TUI_ARGS || true
-  unset CLAWLAB_AGENT_START_ARGS || true
-  unset CLAWLAB_AGENT_START_PORT_FLAG || true
-  unset CLAWLAB_AGENT_FORWARD_PREFIX || true
-  unset CLAWLAB_AGENT_BREW_TAPS || true
-  unset CLAWLAB_AGENT_BREW_PACKAGES || true
-  unset CLAWLAB_AGENT_BREW_CASKS || true
-  unset CLAWLAB_AGENT_BREW_PACKAGES_MACOS_ARM64 || true
-  unset CLAWLAB_AGENT_BREW_CASKS_MACOS_ARM64 || true
-  unset CLAWLAB_AGENT_INSTALL_KIND || true
-  unset CLAWLAB_AGENT_INSTALL_SCRIPT || true
+  unset AELAB_AGENT_KIND || true
+  unset AELAB_AGENT_HOME_ENV || true
+  unset AELAB_AGENT_SETUP_ARGS || true
+  unset AELAB_AGENT_TUI_ARGS || true
+  unset AELAB_AGENT_TUI_YOLO_ARGS || true
+  unset AELAB_AGENT_START_ARGS || true
+  unset AELAB_AGENT_START_PORT_FLAG || true
+  unset AELAB_AGENT_FORWARD_PREFIX || true
+  unset AELAB_AGENT_BREW_TAPS || true
+  unset AELAB_AGENT_BREW_PACKAGES || true
+  unset AELAB_AGENT_BREW_CASKS || true
+  unset AELAB_AGENT_BREW_PACKAGES_MACOS_ARM64 || true
+  unset AELAB_AGENT_BREW_CASKS_MACOS_ARM64 || true
+  unset AELAB_AGENT_INSTALL_KIND || true
+  unset AELAB_AGENT_INSTALL_SCRIPT || true
 }
 
 require_service_field() {
@@ -482,24 +597,26 @@ load_service_definition() {
     source "$custom_file"
   fi
 
-  require_service_field CLAWLAB_SERVICE_ID "$service_id"
-  require_service_field CLAWLAB_SERVICE_DESCRIPTION "$service_id"
-  require_service_field CLAWLAB_SERVICE_BIN "$service_id"
-  if [[ "$CLAWLAB_SERVICE_ID" != "$service_id" ]]; then
-    echo "service manifest ${service_id} does not match CLAWLAB_SERVICE_ID=${CLAWLAB_SERVICE_ID}"
+  require_service_field AELAB_SERVICE_ID "$service_id"
+  require_service_field AELAB_SERVICE_DESCRIPTION "$service_id"
+  if [[ -z "${AELAB_SERVICE_GROUP_MEMBERS:-}" ]]; then
+    require_service_field AELAB_SERVICE_BIN "$service_id"
+  fi
+  if [[ "$AELAB_SERVICE_ID" != "$service_id" ]]; then
+    echo "service manifest ${service_id} does not match AELAB_SERVICE_ID=${AELAB_SERVICE_ID}"
     exit 1
   fi
 
-  CLAWLAB_SERVICE_PORT="$(repo_cfg_value "service-ports" "$service_id")"
-  CLAWLAB_SERVICE_SYSTEMD_NAME="${CLAWLAB_SERVICE_SYSTEMD_NAME:-$service_id}"
-  CLAWLAB_SERVICE_LAUNCHD_LABEL="${CLAWLAB_SERVICE_LAUNCHD_LABEL:-$(launchd_label_prefix).$service_id}"
-  CLAWLAB_SERVICE_RESTART="${CLAWLAB_SERVICE_RESTART:-on-failure}"
-  CLAWLAB_SERVICE_RESTART_SEC="${CLAWLAB_SERVICE_RESTART_SEC:-3s}"
-  CLAWLAB_SERVICE_DIR="${CLAWLAB_SERVICE_DIR:-__CLAWLAB_ROOT__/state/runtimes/__SERVICE_ID__}"
-  CLAWLAB_SERVICE_STDOUT="${CLAWLAB_SERVICE_STDOUT:-__CLAWLAB_ROOT__/state/logs/__SERVICE_ID__.log}"
-  CLAWLAB_SERVICE_STDERR="${CLAWLAB_SERVICE_STDERR:-__CLAWLAB_ROOT__/state/logs/__SERVICE_ID__.err}"
-  CLAWLAB_SERVICE_STATE_DIRS="${CLAWLAB_SERVICE_STATE_DIRS:-__CLAWLAB_SERVICE_DIR__}"
-  CLAWLAB_SERVICE_WORKING_DIRECTORY="${CLAWLAB_SERVICE_WORKING_DIRECTORY:-__CLAWLAB_SERVICE_DIR__}"
+  AELAB_SERVICE_PORT="$(repo_cfg_value "service-ports" "$service_id")"
+  AELAB_SERVICE_SYSTEMD_NAME="${AELAB_SERVICE_SYSTEMD_NAME:-$service_id}"
+  AELAB_SERVICE_LAUNCHD_LABEL="${AELAB_SERVICE_LAUNCHD_LABEL:-$(launchd_label_prefix).$service_id}"
+  AELAB_SERVICE_RESTART="${AELAB_SERVICE_RESTART:-on-failure}"
+  AELAB_SERVICE_RESTART_SEC="${AELAB_SERVICE_RESTART_SEC:-3s}"
+  AELAB_SERVICE_DIR="${AELAB_SERVICE_DIR:-__AELAB_ROOT__/state/runtimes/__SERVICE_ID__}"
+  AELAB_SERVICE_STDOUT="${AELAB_SERVICE_STDOUT:-__AELAB_ROOT__/state/logs/__SERVICE_ID__.log}"
+  AELAB_SERVICE_STDERR="${AELAB_SERVICE_STDERR:-__AELAB_ROOT__/state/logs/__SERVICE_ID__.err}"
+  AELAB_SERVICE_STATE_DIRS="${AELAB_SERVICE_STATE_DIRS:-__AELAB_SERVICE_DIR__}"
+  AELAB_SERVICE_WORKING_DIRECTORY="${AELAB_SERVICE_WORKING_DIRECTORY:-__AELAB_SERVICE_DIR__}"
 }
 
 service_manifest_field_value() {
@@ -525,65 +642,71 @@ service_manifest_field_value() {
   )
 }
 
-caddy_root_service_id() {
-  local service_id
-
-  while IFS= read -r service_id; do
-    [[ -n "$service_id" ]] || continue
-    printf '%s' "$service_id"
-    return 0
-  done < <(caddy_root_service_ids)
-}
-
-caddy_root_service_ids() {
+service_group_member_ids() {
+  local service_id="$1"
   local raw
   local id
 
-  raw="$(service_manifest_field_value "caddy" "CLAWLAB_SERVICE_CADDY_ROOT_SERVICE_IDS")"
-
+  raw="$(service_manifest_field_value "$service_id" "AELAB_SERVICE_GROUP_MEMBERS")"
   raw="$(trim_commas "$raw")"
-  # shellcheck disable=SC2206
-  local -a ids=($raw)
-  for id in "${ids[@]}"; do
-    [[ -n "$id" && "$id" != "caddy" ]] || continue
+  for id in $raw; do
+    [[ -n "$id" ]] || continue
     printf '%s\n' "$id"
   done
 }
 
-caddy_managed_service_ids() {
-  caddy_root_service_ids
+service_is_group() {
+  [[ -n "$(service_manifest_field_value "$1" "AELAB_SERVICE_GROUP_MEMBERS")" ]]
 }
 
 run_service_installer() {
   local service_id="$1"
   local script_path
   local install_optional
+  local stdout_path
+  local stderr_path
+  local install_stamp
 
   load_service_definition "$service_id"
-  install_optional="${CLAWLAB_SERVICE_INSTALL_OPTIONAL:-}"
+  install_optional="${AELAB_SERVICE_INSTALL_OPTIONAL:-}"
 
-  case "${CLAWLAB_SERVICE_INSTALL_KIND:-}" in
+  case "${AELAB_SERVICE_INSTALL_KIND:-}" in
     "")
       ;;
     script)
-      script_path="$(repo_root)/${CLAWLAB_SERVICE_INSTALL_SCRIPT:-}"
-      if [[ -z "${CLAWLAB_SERVICE_INSTALL_SCRIPT:-}" || ! -f "$script_path" ]]; then
-        echo "service ${service_id} is missing a valid CLAWLAB_SERVICE_INSTALL_SCRIPT"
+      script_path="$(repo_root)/${AELAB_SERVICE_INSTALL_SCRIPT:-}"
+      if [[ -z "${AELAB_SERVICE_INSTALL_SCRIPT:-}" || ! -f "$script_path" ]]; then
+        echo "service ${service_id} is missing a valid AELAB_SERVICE_INSTALL_SCRIPT"
         exit 1
       fi
-      if ! bash "$script_path"; then
+      ensure_service_directories
+      stdout_path="$(service_stdout_log_path)"
+      stderr_path="$(service_stderr_log_path)"
+      ensure_group_writable_file "$stdout_path"
+      ensure_group_writable_file "$stderr_path"
+      install_stamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      printf '[%s] installer start %s: %s\n' "$install_stamp" "$service_id" "$script_path" >>"$stdout_path"
+
+      if ! bash "$script_path" \
+        > >(tee -a "$stdout_path") \
+        2> >(tee -a "$stderr_path" >&2); then
         case "$install_optional" in
           1|true|yes|on)
             echo "warning: optional installer failed for ${service_id}; continuing"
             ;;
           *)
+            install_stamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            printf '[%s] installer failed %s: %s\n' "$install_stamp" "$service_id" "$script_path" >>"$stderr_path"
+            echo "installer failed for ${service_id}; inspect ./ae infra log ${service_id}" >&2
             exit 1
             ;;
         esac
       fi
+      install_stamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+      printf '[%s] installer finished %s: %s\n' "$install_stamp" "$service_id" "$script_path" >>"$stdout_path"
       ;;
     *)
-      echo "unsupported CLAWLAB_SERVICE_INSTALL_KIND for ${service_id}: ${CLAWLAB_SERVICE_INSTALL_KIND}"
+      echo "unsupported AELAB_SERVICE_INSTALL_KIND for ${service_id}: ${AELAB_SERVICE_INSTALL_KIND}"
       exit 1
       ;;
   esac
@@ -611,13 +734,13 @@ load_agent_kind_definition() {
     source "$custom_file"
   fi
 
-  if [[ -z "${CLAWLAB_AGENT_KIND:-}" ]]; then
-    echo "agent kind manifest ${kind} is missing CLAWLAB_AGENT_KIND"
+  if [[ -z "${AELAB_AGENT_KIND:-}" ]]; then
+    echo "agent kind manifest ${kind} is missing AELAB_AGENT_KIND"
     exit 1
   fi
 
-  if [[ "$CLAWLAB_AGENT_KIND" != "$kind" ]]; then
-    echo "agent kind manifest ${kind} does not match CLAWLAB_AGENT_KIND=${CLAWLAB_AGENT_KIND}"
+  if [[ "$AELAB_AGENT_KIND" != "$kind" ]]; then
+    echo "agent kind manifest ${kind} does not match AELAB_AGENT_KIND=${AELAB_AGENT_KIND}"
     exit 1
   fi
 }
@@ -634,7 +757,7 @@ agent_is_managed() {
   local agent_id="$1"
 
   load_agent_definition "$agent_id"
-  [[ -n "${CLAWLAB_AGENT_START_ARGS:-}" ]]
+  [[ -n "${AELAB_AGENT_START_ARGS:-}" ]]
 }
 
 agent_directory_name() {
@@ -669,7 +792,7 @@ known_agent_kind_for_id() {
   local cache_var
 
   if ! kind="$(agent_kind_for_id "$agent_id" 2>/dev/null)"; then
-    cache_var="CLAWLAB_WARNED_UNKNOWN_AGENT_${agent_id}"
+    cache_var="AELAB_WARNED_UNKNOWN_AGENT_${agent_id}"
     if [[ -z "${!cache_var:-}" ]]; then
       echo "warning: skipping agent ${agent_id}; unable to determine kind" >&2
       printf -v "$cache_var" 1
@@ -679,7 +802,7 @@ known_agent_kind_for_id() {
   fi
 
   if [[ ! -f "$(agent_kind_manifest_path "$kind")" && ! -f "$(custom_agent_kind_manifest_path "$kind")" ]]; then
-    cache_var="CLAWLAB_WARNED_UNKNOWN_AGENT_KIND_${agent_id}"
+    cache_var="AELAB_WARNED_UNKNOWN_AGENT_KIND_${agent_id}"
     if [[ -z "${!cache_var:-}" ]]; then
       echo "warning: skipping agent ${agent_id}; unknown kind manifest: ${kind}" >&2
       printf -v "$cache_var" 1
@@ -706,16 +829,16 @@ requested_agent_kinds_from_env() {
 expand_runtime_placeholders() {
   local value="$1"
   local service_dir
-  value="${value//__CLAWLAB_ROOT__/${CLAWLAB_ROOT:-$(clawlab_root)}}"
-  value="${value//__CLAWLAB_USER__/${CLAWLAB_USER:-}}"
-  value="${value//__CLAWLAB_GROUP__/$(clawlab_group)}"
-  value="${value//__CLAWLAB_HOST__/${CLAWLAB_HOST:-}}"
-  value="${value//__SERVICE_ID__/${CLAWLAB_SERVICE_ID:-}}"
-  value="${value//__SERVICE_PORT__/${CLAWLAB_SERVICE_PORT:-}}"
-  service_dir="${CLAWLAB_SERVICE_DIR:-__CLAWLAB_ROOT__/state/runtimes/__SERVICE_ID__}"
-  service_dir="${service_dir//__CLAWLAB_ROOT__/${CLAWLAB_ROOT:-$(clawlab_root)}}"
-  service_dir="${service_dir//__SERVICE_ID__/${CLAWLAB_SERVICE_ID:-}}"
-  value="${value//__CLAWLAB_SERVICE_DIR__/$service_dir}"
+  value="${value//__AELAB_ROOT__/${AELAB_ROOT:-$(aelab_root)}}"
+  value="${value//__AELAB_USER__/${AELAB_USER:-}}"
+  value="${value//__AELAB_GROUP__/$(aelab_group)}"
+  value="${value//__AELAB_HOST__/${AELAB_HOST:-}}"
+  value="${value//__SERVICE_ID__/${AELAB_SERVICE_ID:-}}"
+  value="${value//__SERVICE_PORT__/${AELAB_SERVICE_PORT:-}}"
+  service_dir="${AELAB_SERVICE_DIR:-__AELAB_ROOT__/state/runtimes/__SERVICE_ID__}"
+  service_dir="${service_dir//__AELAB_ROOT__/${AELAB_ROOT:-$(aelab_root)}}"
+  service_dir="${service_dir//__SERVICE_ID__/${AELAB_SERVICE_ID:-}}"
+  value="${value//__AELAB_SERVICE_DIR__/$service_dir}"
   printf '%s' "$value"
 }
 
@@ -725,7 +848,7 @@ expand_agent_env_placeholders() {
   local agent_dir
 
   value="$(expand_runtime_placeholders "$value")"
-  agent_dir="${CLAWLAB_ROOT:-$(clawlab_root)}/agents/$(agent_directory_name "$agent_id")"
+  agent_dir="${AELAB_ROOT:-$(aelab_root)}/agents/$(agent_directory_name "$agent_id")"
   value="${value//__AGENT_DIR__/$agent_dir}"
   printf '%s' "$value"
 }
@@ -752,7 +875,7 @@ split_shell_words() {
 
 resolve_service_binary() {
   local bin
-  bin="$(expand_runtime_placeholders "$CLAWLAB_SERVICE_BIN")"
+  bin="$(expand_runtime_placeholders "$AELAB_SERVICE_BIN")"
   if [[ "$bin" == */* ]]; then
     if [[ -x "$bin" ]]; then
       printf '%s' "$bin"
@@ -764,15 +887,15 @@ resolve_service_binary() {
 }
 
 service_description() {
-  printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_DESCRIPTION")"
+  printf '%s' "$(expand_runtime_placeholders "$AELAB_SERVICE_DESCRIPTION")"
 }
 
 service_systemd_name() {
-  printf '%s' "$CLAWLAB_SERVICE_SYSTEMD_NAME"
+  printf '%s' "$AELAB_SERVICE_SYSTEMD_NAME"
 }
 
 service_launchd_label() {
-  printf '%s' "$CLAWLAB_SERVICE_LAUNCHD_LABEL"
+  printf '%s' "$AELAB_SERVICE_LAUNCHD_LABEL"
 }
 
 service_launchd_plist_path() {
@@ -793,17 +916,17 @@ agent_launchd_plist_path() {
 }
 
 install_systemd_agent_unit_template() {
-  local clawlab_root="$1"
-  local clawlab_user="$2"
+  local aelab_root="$1"
+  local aelab_user="$2"
   local rendered
   local dest
 
   rendered="$(mktemp)"
   dest="$(agent_systemd_unit_path)"
   render_template "$(service_templates_dir)/agent.systemd" "$rendered" \
-    __CLAWLAB_ROOT__ "$clawlab_root" \
-    __CLAWLAB_USER__ "$clawlab_user" \
-    __CLAWLAB_GROUP__ "$(clawlab_group)" \
+    __AELAB_ROOT__ "$aelab_root" \
+    __AELAB_USER__ "$aelab_user" \
+    __AELAB_GROUP__ "$(aelab_group)" \
     __PATH_BLOCK__ "$(systemd_path_block)"
   sudo install -m 0644 "$rendered" "$dest"
   rm -f "$rendered"
@@ -812,39 +935,39 @@ install_systemd_agent_unit_template() {
 }
 
 agent_shared_env_file_path() {
-  printf '%s/config/custom/env/agents.env' "${CLAWLAB_ROOT:-$(clawlab_root)}"
+  printf '%s/config/custom/env/agents.env' "${AELAB_ROOT:-$(aelab_root)}"
 }
 
 agent_env_file_path() {
   local agent_id="$1"
-  printf '%s/config/custom/env/agents/%s.env' "${CLAWLAB_ROOT:-$(clawlab_root)}" "$agent_id"
+  printf '%s/config/custom/env/agents/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$agent_id"
 }
 
 service_shared_env_file_path() {
-  printf '%s/config/custom/env/services.env' "${CLAWLAB_ROOT:-$(clawlab_root)}"
+  printf '%s/config/custom/env/services.env' "${AELAB_ROOT:-$(aelab_root)}"
 }
 
 service_env_file_path() {
   local service_id="$1"
-  printf '%s/config/custom/env/services/%s.env' "${CLAWLAB_ROOT:-$(clawlab_root)}" "$service_id"
+  printf '%s/config/custom/env/services/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$service_id"
 }
 
 agent_stdout_log_path() {
   local agent_id="$1"
-  printf '%s/state/logs/agent/%s.log' "${CLAWLAB_ROOT:-$(clawlab_root)}" "$agent_id"
+  printf '%s/state/logs/agent/%s.log' "${AELAB_ROOT:-$(aelab_root)}" "$agent_id"
 }
 
 agent_stderr_log_path() {
   local agent_id="$1"
-  printf '%s/state/logs/agent/%s.err' "${CLAWLAB_ROOT:-$(clawlab_root)}" "$agent_id"
+  printf '%s/state/logs/agent/%s.err' "${AELAB_ROOT:-$(aelab_root)}" "$agent_id"
 }
 
 service_stdout_log_path() {
-  printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_STDOUT")"
+  printf '%s' "$(expand_runtime_placeholders "$AELAB_SERVICE_STDOUT")"
 }
 
 service_stderr_log_path() {
-  printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_STDERR")"
+  printf '%s' "$(expand_runtime_placeholders "$AELAB_SERVICE_STDERR")"
 }
 
 service_exec_start() {
@@ -853,11 +976,11 @@ service_exec_start() {
 
   bin_path="$(resolve_service_binary)"
   if [[ -z "$bin_path" ]]; then
-    echo "service ${CLAWLAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$CLAWLAB_SERVICE_BIN")" >&2
+    echo "service ${AELAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$AELAB_SERVICE_BIN")" >&2
     return 1
   fi
 
-  args="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_ARGS:-}")"
+  args="$(expand_runtime_placeholders "${AELAB_SERVICE_ARGS:-}")"
   if [[ -n "$args" ]]; then
     printf '%s %s' "$bin_path" "$args"
   else
@@ -869,14 +992,14 @@ service_exec_reload() {
   local bin_path
   local args
 
-  args="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_RELOAD_ARGS:-}")"
+  args="$(expand_runtime_placeholders "${AELAB_SERVICE_RELOAD_ARGS:-}")"
   if [[ -z "$args" ]]; then
     return 0
   fi
 
   bin_path="$(resolve_service_binary)"
   if [[ -z "$bin_path" ]]; then
-    echo "service ${CLAWLAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$CLAWLAB_SERVICE_BIN")" >&2
+    echo "service ${AELAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$AELAB_SERVICE_BIN")" >&2
     return 1
   fi
 
@@ -891,12 +1014,12 @@ service_program_arguments_block() {
 
   bin_path="$(resolve_service_binary)"
   if [[ -z "$bin_path" ]]; then
-    echo "service ${CLAWLAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$CLAWLAB_SERVICE_BIN")" >&2
+    echo "service ${AELAB_SERVICE_ID} binary not found: $(expand_runtime_placeholders "$AELAB_SERVICE_BIN")" >&2
     return 1
   fi
 
   words+=("$bin_path")
-  args="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_ARGS:-}")"
+  args="$(expand_runtime_placeholders "${AELAB_SERVICE_ARGS:-}")"
   if [[ -n "$args" ]]; then
     while IFS= read -r word; do
       [[ -n "$word" ]] || continue
@@ -918,8 +1041,8 @@ systemd_assignment_block() {
 }
 
 systemd_path_block() {
-  if [[ -n "${CLAWLAB_PATH:-}" ]]; then
-    systemd_assignment_block Environment "PATH=$(expand_runtime_placeholders "$CLAWLAB_PATH")"
+  if [[ -n "${AELAB_PATH:-}" ]]; then
+    systemd_assignment_block Environment "PATH=$(expand_runtime_placeholders "$AELAB_PATH")"
   fi
 }
 
@@ -938,14 +1061,14 @@ service_systemd_environment_block() {
 
   systemd_path_block
 
-  raw="${CLAWLAB_SERVICE_ENV:-}"
+  raw="${AELAB_SERVICE_ENV:-}"
   [[ -n "$raw" ]] || return 0
 
   raw="${raw//|/$'\n'}"
   while IFS= read -r item; do
     [[ -n "$item" ]] || continue
     if [[ "$item" != *=* ]]; then
-      echo "invalid CLAWLAB_SERVICE_ENV assignment: $item" >&2
+      echo "invalid AELAB_SERVICE_ENV assignment: $item" >&2
       return 1
     fi
     key="${item%%=*}"
@@ -962,8 +1085,8 @@ service_systemd_environment_file_block() {
   local custom_file
 
   shared_file="$(service_shared_env_file_path)"
-  file="$(service_env_file_path "$CLAWLAB_SERVICE_ID")"
-  custom_file="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_SYSTEMD_ENVIRONMENT_FILE:-}")"
+  file="$(service_env_file_path "$AELAB_SERVICE_ID")"
+  custom_file="$(expand_runtime_placeholders "${AELAB_SERVICE_SYSTEMD_ENVIRONMENT_FILE:-}")"
 
   systemd_assignment_block EnvironmentFile "-$shared_file"
   systemd_assignment_block EnvironmentFile "-$file"
@@ -988,7 +1111,7 @@ agent_launchd_environment_variables_block() {
   local value
   local has_env=0
 
-  if [[ -n "${CLAWLAB_PATH:-}" ]]; then
+  if [[ -n "${AELAB_PATH:-}" ]]; then
     has_env=1
   fi
 
@@ -1003,9 +1126,9 @@ agent_launchd_environment_variables_block() {
   printf '  <key>EnvironmentVariables</key>\n'
   printf '  <dict>\n'
 
-  if [[ -n "${CLAWLAB_PATH:-}" ]]; then
+  if [[ -n "${AELAB_PATH:-}" ]]; then
     printf '    <key>PATH</key>\n'
-    printf '    <string>%s</string>\n' "$(xml_escape "$(expand_runtime_placeholders "$CLAWLAB_PATH")")"
+    printf '    <string>%s</string>\n' "$(xml_escape "$(expand_runtime_placeholders "$AELAB_PATH")")"
   fi
 
   emit_launchd_env_file_entries "$agent_id" "$shared_file" "$file"
@@ -1126,9 +1249,9 @@ service_launchd_environment_variables_block() {
   local has_env=0
 
   shared_file="$(service_shared_env_file_path)"
-  file="$(service_env_file_path "$CLAWLAB_SERVICE_ID")"
+  file="$(service_env_file_path "$AELAB_SERVICE_ID")"
 
-  if [[ -n "${CLAWLAB_PATH:-}" || -n "${CLAWLAB_SERVICE_ENV:-}" ]] || env_file_has_assignments "$shared_file" || env_file_has_assignments "$file"; then
+  if [[ -n "${AELAB_PATH:-}" || -n "${AELAB_SERVICE_ENV:-}" ]] || env_file_has_assignments "$shared_file" || env_file_has_assignments "$file"; then
     has_env=1
   fi
 
@@ -1137,17 +1260,17 @@ service_launchd_environment_variables_block() {
   printf '  <key>EnvironmentVariables</key>\n'
   printf '  <dict>\n'
 
-  if [[ -n "${CLAWLAB_PATH:-}" ]]; then
+  if [[ -n "${AELAB_PATH:-}" ]]; then
     printf '    <key>PATH</key>\n'
-    printf '    <string>%s</string>\n' "$(xml_escape "$(expand_runtime_placeholders "$CLAWLAB_PATH")")"
+    printf '    <string>%s</string>\n' "$(xml_escape "$(expand_runtime_placeholders "$AELAB_PATH")")"
   fi
 
-  raw="${CLAWLAB_SERVICE_ENV:-}"
+  raw="${AELAB_SERVICE_ENV:-}"
   raw="${raw//|/$'\n'}"
   while IFS= read -r item; do
     [[ -n "$item" ]] || continue
     if [[ "$item" != *=* ]]; then
-      echo "invalid CLAWLAB_SERVICE_ENV assignment: $item" >&2
+      echo "invalid AELAB_SERVICE_ENV assignment: $item" >&2
       return 1
     fi
     key="${item%%=*}"
@@ -1167,38 +1290,39 @@ service_launchd_environment_variables_block() {
   printf '  </dict>\n'
 }
 
-ensure_clawlab_state_root() {
+ensure_aelab_state_root() {
   local group
-  group="$(clawlab_group)"
+  group="$(aelab_group)"
   mkdir -p \
-    "$CLAWLAB_ROOT/state" \
-    "$CLAWLAB_ROOT/state/logs" \
-    "$CLAWLAB_ROOT/state/logs/agent" \
-    "$CLAWLAB_ROOT/state/runtimes"
+    "$AELAB_ROOT/state" \
+    "$AELAB_ROOT/state/logs" \
+    "$AELAB_ROOT/state/logs/agent" \
+    "$AELAB_ROOT/state/runtimes"
   chgrp "$group" \
-    "$CLAWLAB_ROOT/state" \
-    "$CLAWLAB_ROOT/state/logs" \
-    "$CLAWLAB_ROOT/state/logs/agent" \
-    "$CLAWLAB_ROOT/state/runtimes" 2>/dev/null || true
+    "$AELAB_ROOT/state" \
+    "$AELAB_ROOT/state/logs" \
+    "$AELAB_ROOT/state/logs/agent" \
+    "$AELAB_ROOT/state/runtimes" 2>/dev/null || true
   chmod g+rwxs \
-    "$CLAWLAB_ROOT/state" \
-    "$CLAWLAB_ROOT/state/logs" \
-    "$CLAWLAB_ROOT/state/logs/agent" \
-    "$CLAWLAB_ROOT/state/runtimes" 2>/dev/null || true
+    "$AELAB_ROOT/state" \
+    "$AELAB_ROOT/state/logs" \
+    "$AELAB_ROOT/state/logs/agent" \
+    "$AELAB_ROOT/state/runtimes" 2>/dev/null || true
 }
 
-repair_clawlab_agent_permissions() {
+repair_aelab_agent_permissions() {
   local agent_id="$1"
+  local owner="${2:-${AELAB_USER:-}}"
   local agent_dir
 
-  ensure_clawlab_state_root
-  agent_dir="$CLAWLAB_ROOT/agents/$(agent_directory_name "$agent_id")"
+  ensure_aelab_state_root
+  agent_dir="$AELAB_ROOT/agents/$(agent_directory_name "$agent_id")"
   [[ -d "$agent_dir" ]] || return 0
-  repair_clawlab_path_permissions "$agent_dir" "${2:-${CLAWLAB_USER:-}}"
+  repair_aelab_path_permissions "$agent_dir" "$owner"
 }
 
-repair_clawlab_service_permissions() {
-  local owner="${1:-${CLAWLAB_SERVICE_USER:-${CLAWLAB_USER:-}}}"
+repair_aelab_service_permissions() {
+  local owner="${1:-${AELAB_SERVICE_USER:-${AELAB_USER:-}}}"
   local service_dir
   local state_dirs
   local path
@@ -1208,11 +1332,11 @@ repair_clawlab_service_permissions() {
   local skip
 
   ensure_service_directories
-  service_dir="$(expand_runtime_placeholders "__CLAWLAB_SERVICE_DIR__")"
-  repair_clawlab_path_permissions "$service_dir" "$owner"
+  service_dir="$(expand_runtime_placeholders "__AELAB_SERVICE_DIR__")"
+  repair_aelab_path_permissions "$service_dir" "$owner"
   repaired_paths+="${service_dir}"$'\n'
 
-  state_dirs="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_STATE_DIRS:-}")"
+  state_dirs="$(expand_runtime_placeholders "${AELAB_SERVICE_STATE_DIRS:-}")"
   if [[ -n "$state_dirs" ]]; then
     # shellcheck disable=SC2206
     local -a dirs=($(trim_commas "$state_dirs"))
@@ -1226,32 +1350,190 @@ repair_clawlab_service_permissions() {
         esac
       done <<< "$repaired_paths"
       ((skip == 0)) || continue
-      repair_clawlab_path_permissions "$path" "$owner"
+      repair_aelab_path_permissions "$path" "$owner"
       repaired_paths+="${path}"$'\n'
     done
   fi
 
   for log_path in "$(service_stdout_log_path)" "$(service_stderr_log_path)"; do
     [[ -e "$log_path" ]] || continue
-    repair_clawlab_path_permissions "$log_path" "$owner"
+    repair_aelab_path_permissions "$log_path" "$owner"
   done
 }
 
-repair_clawlab_path_permissions() {
+repair_aelab_repo_permissions() {
+  local owner="${1:-${AELAB_USER:-}}"
+  local group
+  local path
+  local -a paths=()
+
+  owner="$(expand_runtime_placeholders "$owner")"
+  [[ -n "$owner" ]] || return 0
+  group="$(aelab_group)"
+
+  for path in \
+    "$AELAB_ROOT/README.md" \
+    "$AELAB_ROOT/LICENSE" \
+    "$AELAB_ROOT/ae" \
+    "$AELAB_ROOT/config" \
+    "$AELAB_ROOT/infra"
+  do
+    [[ -e "$path" ]] && paths+=("$path")
+  done
+
+  chgrp "$group" "$AELAB_ROOT" 2>/dev/null || repair_aelab_sudo chgrp "$group" "$AELAB_ROOT" 2>/dev/null || true
+  chmod g+rwxs "$AELAB_ROOT" 2>/dev/null || repair_aelab_sudo chmod g+rwxs "$AELAB_ROOT" 2>/dev/null || true
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -exec chgrp "$group" {} + 2>/dev/null || true
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -type d -exec chmod g+rwxs {} + 2>/dev/null || true
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -type f -exec chmod g+rw {} + 2>/dev/null || true
+
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -exec sudo -n chown "$owner:$group" {} + 2>/dev/null || true
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -type d -exec sudo -n chmod g+rwxs {} + 2>/dev/null || true
+  find "${paths[@]}" -path "$AELAB_ROOT/.git" -prune -o -type f -exec sudo -n chmod g+rw {} + 2>/dev/null || true
+  AELAB_REPAIR_NO_PROMPT=1 repair_aelab_group_acl "$AELAB_ROOT" "$group"
+}
+
+repair_aelab_path_permissions() {
   local path="$1"
-  local owner="${2:-${CLAWLAB_USER:-}}"
+  local owner="${2:-${AELAB_USER:-}}"
   local group
   local mismatch
 
   owner="$(expand_runtime_placeholders "$owner")"
   [[ -n "$owner" && -e "$path" ]] || return 0
-  group="$(clawlab_group)"
+  group="$(aelab_group)"
   mismatch="$(find "$path" \( ! -user "$owner" -o ! -group "$group" -o \( -type d \( ! -perm -020 -o ! -perm -2000 \) \) -o \( -type f ! -perm -020 \) \) -print -quit 2>/dev/null || true)"
   [[ -n "$mismatch" ]] || return 0
-  log_verbose "[repair] $path -> $owner:$group, group-writable directories/files"
-  sudo chown -R "$owner:$group" "$path"
-  sudo find "$path" -type d -exec chmod g+rwxs {} +
-  sudo find "$path" -type f -exec chmod g+rw {} +
+  log --verbose "[repair] $path -> $owner:$group, group-writable directories/files"
+
+  chgrp -R "$group" "$path" 2>/dev/null || true
+  find "$path" -type d -exec chmod g+rwxs {} + 2>/dev/null || true
+  find "$path" -type f -exec chmod g+rw {} + 2>/dev/null || true
+  repair_aelab_group_acl "$path" "$group"
+
+  mismatch="$(find "$path" \( ! -user "$owner" -o ! -group "$group" -o \( -type d \( ! -perm -020 -o ! -perm -2000 \) \) -o \( -type f ! -perm -020 \) \) -print -quit 2>/dev/null || true)"
+  [[ -n "$mismatch" ]] || return 0
+
+  if ! repair_aelab_sudo chown -R "$owner:$group" "$path"; then
+    log --verbose "[repair] skipped $path; sudo permission unavailable"
+    return 0
+  fi
+  repair_aelab_sudo chmod g+rwxs "$path" 2>/dev/null || true
+  find "$path" -type d -exec sudo -n chmod g+rwxs {} + 2>/dev/null || true
+  find "$path" -type f -exec sudo -n chmod g+rw {} + 2>/dev/null || true
+  repair_aelab_group_acl "$path" "$group"
+}
+
+repair_aelab_path_permissions_shallow() {
+  local path="$1"
+  local owner="${2:-${AELAB_USER:-}}"
+  local group
+  local mismatch=0
+  local current_owner
+  local current_group
+
+  owner="$(expand_runtime_placeholders "$owner")"
+  [[ -n "$owner" && -e "$path" ]] || return 0
+  group="$(aelab_group)"
+  current_owner="$(path_owner "$path")"
+  current_group="$(path_group "$path")"
+
+  if [[ "$current_owner" != "$owner" || "$current_group" != "$group" ]] || path_has_shallow_permission_mismatch "$path"; then
+    mismatch=1
+  fi
+  ((mismatch == 1)) || return 0
+
+  log --verbose "[repair] $path -> $owner:$group, group-writable"
+  chgrp "$group" "$path" 2>/dev/null || true
+  if [[ -d "$path" ]]; then
+    chmod g+rwxs "$path" 2>/dev/null || true
+  else
+    chmod g+rw "$path" 2>/dev/null || true
+  fi
+  repair_aelab_group_acl "$path" "$group"
+
+  current_owner="$(path_owner "$path")"
+  current_group="$(path_group "$path")"
+  if [[ "$current_owner" != "$owner" || "$current_group" != "$group" ]] || path_has_shallow_permission_mismatch "$path"; then
+    if ! repair_aelab_sudo chown "$owner:$group" "$path"; then
+      log --verbose "[repair] skipped $path; sudo permission unavailable"
+      return 0
+    fi
+    if [[ -d "$path" ]]; then
+      repair_aelab_sudo chmod g+rwxs "$path" || true
+    else
+      repair_aelab_sudo chmod g+rw "$path" || true
+    fi
+    repair_aelab_group_acl "$path" "$group"
+  fi
+}
+
+path_has_shallow_permission_mismatch() {
+  local path="$1"
+  local mode_text
+  local mode
+
+  mode_text="$(path_mode "$path")"
+  [[ -n "$mode_text" ]] || return 1
+  mode=$((8#$mode_text))
+
+  if [[ -d "$path" ]]; then
+    (( (mode & 0020) == 0 || (mode & 0010) == 0 || (mode & 02000) == 0 ))
+  elif [[ -f "$path" ]]; then
+    (( (mode & 0020) == 0 ))
+  else
+    return 1
+  fi
+}
+
+path_mode() {
+  if is_macos; then
+    stat -f '%Lp' "$1" 2>/dev/null || true
+  else
+    stat -c '%a' "$1" 2>/dev/null || true
+  fi
+}
+
+path_owner() {
+  if is_macos; then
+    stat -f '%Su' "$1" 2>/dev/null || true
+  else
+    stat -c '%U' "$1" 2>/dev/null || true
+  fi
+}
+
+path_group() {
+  if is_macos; then
+    stat -f '%Sg' "$1" 2>/dev/null || true
+  else
+    stat -c '%G' "$1" 2>/dev/null || true
+  fi
+}
+
+repair_aelab_sudo() {
+  if [[ "${AELAB_REPAIR_NO_PROMPT:-}" == "1" ]]; then
+    sudo -n "$@" 2>/dev/null
+  else
+    sudo "$@"
+  fi
+}
+
+repair_aelab_group_acl() {
+  local path="$1"
+  local group="$2"
+  local acl
+
+  is_macos || return 0
+  [[ -e "$path" ]] || return 0
+  ls -lde "$path" 2>/dev/null | grep -F "group:${group} allow" >/dev/null && return 0
+
+  if [[ -d "$path" ]]; then
+    acl="group:${group} allow list,add_file,search,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit"
+  else
+    acl="group:${group} allow read,write,append,readattr,writeattr,readextattr,writeextattr,readsecurity"
+  fi
+
+  chmod +a "$acl" "$path" 2>/dev/null || repair_aelab_sudo chmod +a "$acl" "$path" || true
 }
 
 ensure_group_directory() {
@@ -1264,6 +1546,38 @@ ensure_group_directory() {
   chmod g+rwxs "$path" 2>/dev/null || true
 }
 
+ensure_group_writable_file() {
+  local path="$1"
+  local owner="${2:-${AELAB_SERVICE_USER:-${AELAB_USER:-}}}"
+  local group
+
+  [[ -n "$path" ]] || return 0
+  owner="$(expand_runtime_placeholders "$owner")"
+  group="$(aelab_group)"
+
+  if [[ -e "$path" ]]; then
+    chgrp "$group" "$path" 2>/dev/null || true
+    chmod g+rw "$path" 2>/dev/null || true
+    if [[ -w "$path" ]]; then
+      return 0
+    fi
+    repair_aelab_sudo chgrp "$group" "$path" 2>/dev/null || true
+    repair_aelab_sudo chmod g+rw "$path" 2>/dev/null || true
+    [[ -w "$path" ]] && return 0
+  else
+    if : >> "$path" 2>/dev/null; then
+      chgrp "$group" "$path" 2>/dev/null || true
+      chmod g+rw "$path" 2>/dev/null || true
+      return 0
+    fi
+    repair_aelab_sudo install -o "$owner" -g "$group" -m 0664 /dev/null "$path" >/dev/null 2>&1 || true
+    [[ -w "$path" ]] && return 0
+  fi
+
+  echo "unable to prepare writable log file: $path" >&2
+  return 1
+}
+
 ensure_service_directories() {
   local stdout_path
   local stderr_path
@@ -1271,16 +1585,16 @@ ensure_service_directories() {
   local path
   local group
 
-  ensure_clawlab_state_root
-  group="$(clawlab_group)"
+  ensure_aelab_state_root
+  group="$(aelab_group)"
 
   stdout_path="$(service_stdout_log_path)"
   stderr_path="$(service_stderr_log_path)"
   ensure_group_directory "$(dirname "$stdout_path")" "$group"
   ensure_group_directory "$(dirname "$stderr_path")" "$group"
-  ensure_group_directory "$(expand_runtime_placeholders "__CLAWLAB_SERVICE_DIR__")" "$group"
+  ensure_group_directory "$(expand_runtime_placeholders "__AELAB_SERVICE_DIR__")" "$group"
 
-  state_dirs="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_STATE_DIRS:-}")"
+  state_dirs="$(expand_runtime_placeholders "${AELAB_SERVICE_STATE_DIRS:-}")"
   if [[ -n "$state_dirs" ]]; then
     # shellcheck disable=SC2206
     local -a dirs=($(trim_commas "$state_dirs"))
@@ -1302,24 +1616,24 @@ render_service_systemd_unit() {
 
   render_template "$template" "$dest" \
     __DESCRIPTION__ "$(service_description)" \
-    __AFTER_BLOCK__ "$(systemd_assignment_block After "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_AFTER:-}")")" \
-    __WANTS_BLOCK__ "$(systemd_assignment_block Wants "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_WANTS:-}")")" \
-    __USER_BLOCK__ "$(systemd_assignment_block User "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_USER:-}")")" \
-    __GROUP_BLOCK__ "$(systemd_assignment_block Group "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_GROUP:-__CLAWLAB_GROUP__}")")" \
-    __WORKING_DIRECTORY_BLOCK__ "$(systemd_assignment_block WorkingDirectory "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_WORKING_DIRECTORY:-}")")" \
+    __AFTER_BLOCK__ "$(systemd_assignment_block After "$(expand_runtime_placeholders "${AELAB_SERVICE_AFTER:-}")")" \
+    __WANTS_BLOCK__ "$(systemd_assignment_block Wants "$(expand_runtime_placeholders "${AELAB_SERVICE_WANTS:-}")")" \
+    __USER_BLOCK__ "$(systemd_assignment_block User "$(expand_runtime_placeholders "${AELAB_SERVICE_USER:-}")")" \
+    __GROUP_BLOCK__ "$(systemd_assignment_block Group "$(expand_runtime_placeholders "${AELAB_SERVICE_GROUP:-__AELAB_GROUP__}")")" \
+    __WORKING_DIRECTORY_BLOCK__ "$(systemd_assignment_block WorkingDirectory "$(expand_runtime_placeholders "${AELAB_SERVICE_WORKING_DIRECTORY:-}")")" \
     __PATH_BLOCK__ "$(service_systemd_environment_block)" \
     __ENVIRONMENT_FILE_BLOCK__ "$(service_systemd_environment_file_block)" \
     __EXEC_START__ "$exec_start" \
     __EXEC_RELOAD_BLOCK__ "$(systemd_assignment_block ExecReload "$exec_reload")" \
-    __EXEC_STOP_BLOCK__ "$(systemd_assignment_block ExecStop "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_STOP_COMMAND:-}")")" \
-    __RESTART__ "$CLAWLAB_SERVICE_RESTART" \
-    __RESTART_SEC__ "$CLAWLAB_SERVICE_RESTART_SEC" \
+    __EXEC_STOP_BLOCK__ "$(systemd_assignment_block ExecStop "$(expand_runtime_placeholders "${AELAB_SERVICE_STOP_COMMAND:-}")")" \
+    __RESTART__ "$AELAB_SERVICE_RESTART" \
+    __RESTART_SEC__ "$AELAB_SERVICE_RESTART_SEC" \
     __STDOUT__ "$(service_stdout_log_path)" \
     __STDERR__ "$(service_stderr_log_path)" \
-    __AMBIENT_CAPABILITIES_BLOCK__ "$(systemd_assignment_block AmbientCapabilities "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_SYSTEMD_AMBIENT_CAPABILITIES:-}")")" \
-    __CAPABILITY_BOUNDING_SET_BLOCK__ "$(systemd_assignment_block CapabilityBoundingSet "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_SYSTEMD_CAPABILITY_BOUNDING_SET:-}")")" \
-    __NO_NEW_PRIVILEGES_BLOCK__ "$(systemd_assignment_block NoNewPrivileges "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_SYSTEMD_NO_NEW_PRIVILEGES:-}")")" \
-    __LIMIT_NOFILE_BLOCK__ "$(systemd_assignment_block LimitNOFILE "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_SYSTEMD_LIMIT_NOFILE:-}")")"
+    __AMBIENT_CAPABILITIES_BLOCK__ "$(systemd_assignment_block AmbientCapabilities "$(expand_runtime_placeholders "${AELAB_SERVICE_SYSTEMD_AMBIENT_CAPABILITIES:-}")")" \
+    __CAPABILITY_BOUNDING_SET_BLOCK__ "$(systemd_assignment_block CapabilityBoundingSet "$(expand_runtime_placeholders "${AELAB_SERVICE_SYSTEMD_CAPABILITY_BOUNDING_SET:-}")")" \
+    __NO_NEW_PRIVILEGES_BLOCK__ "$(systemd_assignment_block NoNewPrivileges "$(expand_runtime_placeholders "${AELAB_SERVICE_SYSTEMD_NO_NEW_PRIVILEGES:-}")")" \
+    __LIMIT_NOFILE_BLOCK__ "$(systemd_assignment_block LimitNOFILE "$(expand_runtime_placeholders "${AELAB_SERVICE_SYSTEMD_LIMIT_NOFILE:-}")")"
 }
 
 install_systemd_service_unit() {
@@ -1330,7 +1644,8 @@ install_systemd_service_unit() {
   load_service_definition "$service_id"
   ensure_service_directories
 
-  rendered="$(mktemp)"
+  mkdir -p "$(repo_root)/infra/generated"
+  rendered="$(mktemp "$(repo_root)/infra/generated/${service_id}.unit.XXXXXX")"
   dest="$(service_systemd_unit_path)"
   render_service_systemd_unit "$rendered"
   sudo install -m 0644 "$rendered" "$dest"
@@ -1349,9 +1664,9 @@ render_service_launchd_plist() {
 
   render_template "$template" "$dest" \
     __LABEL__ "$(service_launchd_label)" \
-    __USERNAME_BLOCK__ "$(launchd_string_block UserName "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_USER:-}")")" \
-    __GROUPNAME_BLOCK__ "$(launchd_string_block GroupName "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_GROUP:-__CLAWLAB_GROUP__}")")" \
-    __WORKING_DIRECTORY_BLOCK__ "$(launchd_string_block WorkingDirectory "$(expand_runtime_placeholders "${CLAWLAB_SERVICE_WORKING_DIRECTORY:-}")")" \
+    __USERNAME_BLOCK__ "$(launchd_string_block UserName "$(expand_runtime_placeholders "${AELAB_SERVICE_USER:-}")")" \
+    __GROUPNAME_BLOCK__ "$(launchd_string_block GroupName "$(expand_runtime_placeholders "${AELAB_SERVICE_GROUP:-__AELAB_GROUP__}")")" \
+    __WORKING_DIRECTORY_BLOCK__ "$(launchd_string_block WorkingDirectory "$(expand_runtime_placeholders "${AELAB_SERVICE_WORKING_DIRECTORY:-}")")" \
     __ENVIRONMENT_VARIABLES_BLOCK__ "$(service_launchd_environment_variables_block)" \
     __PROGRAM_ARGUMENTS_BLOCK__ "$program_arguments" \
     __STDOUT__ "$(service_stdout_log_path)" \
@@ -1366,7 +1681,8 @@ install_service_launchd_plist() {
   load_service_definition "$service_id"
   ensure_service_directories
 
-  rendered="$(mktemp)"
+  mkdir -p "$(repo_root)/infra/generated"
+  rendered="$(mktemp "$(repo_root)/infra/generated/${service_id}.plist.XXXXXX")"
   dest="$(service_launchd_plist_path)"
   sudo launchctl bootout system "$dest" >/dev/null 2>&1 || true
   render_service_launchd_plist "$rendered"
@@ -1427,8 +1743,8 @@ launchd_service_pid() {
 
 install_launchd_agent_plist() {
   local agent_id="$1"
-  local clawlab_root="$2"
-  local clawlab_user="$3"
+  local aelab_root="$2"
+  local aelab_user="$3"
   local label
   local template
   local rendered
@@ -1436,15 +1752,16 @@ install_launchd_agent_plist() {
 
   label="$(service_label_for_agent "$agent_id")"
   template="$(service_templates_dir)/agent.launchd.plist"
-  rendered="$(mktemp)"
+  mkdir -p "$(repo_root)/infra/generated"
+  rendered="$(mktemp "$(repo_root)/infra/generated/agent-${agent_id}.plist.XXXXXX")"
   dest="/Library/LaunchDaemons/${label}.plist"
 
   sudo launchctl bootout system "$dest" >/dev/null 2>&1 || true
   render_template "$template" "$rendered" \
     __LABEL__ "$label" \
-    __CLAWLAB_ROOT__ "$clawlab_root" \
-    __CLAWLAB_USER__ "$clawlab_user" \
-    __CLAWLAB_GROUP__ "$(clawlab_group)" \
+    __AELAB_ROOT__ "$aelab_root" \
+    __AELAB_USER__ "$aelab_user" \
+    __AELAB_GROUP__ "$(aelab_group)" \
     __ENVIRONMENT_VARIABLES_BLOCK__ "$(agent_launchd_environment_variables_block "$agent_id")" \
     __AGENT_ID__ "$agent_id"
   sudo install -m 0644 "$rendered" "$dest"

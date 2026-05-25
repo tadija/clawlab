@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
-CLAWLAB_LOG_PREFIX="bootstrap"
+AELAB_LOG_PREFIX="bootstrap"
 load_host_env
 
 INFRA_DIR="$(infra_root)"
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 
 run_agent_kind_installers() {
   local kind
@@ -17,20 +17,20 @@ run_agent_kind_installers() {
   while IFS= read -r kind; do
     [[ -n "$kind" ]] || continue
     load_agent_kind_definition "$kind"
-    case "${CLAWLAB_AGENT_INSTALL_KIND:-}" in
+    case "${AELAB_AGENT_INSTALL_KIND:-}" in
       "")
         ;;
       script)
-        script_path="$(repo_root)/${CLAWLAB_AGENT_INSTALL_SCRIPT:-}"
-        if [[ -z "${CLAWLAB_AGENT_INSTALL_SCRIPT:-}" || ! -f "$script_path" ]]; then
-          echo "agent kind ${kind} is missing a valid CLAWLAB_AGENT_INSTALL_SCRIPT"
+        script_path="$(repo_root)/${AELAB_AGENT_INSTALL_SCRIPT:-}"
+        if [[ -z "${AELAB_AGENT_INSTALL_SCRIPT:-}" || ! -f "$script_path" ]]; then
+          echo "agent kind ${kind} is missing a valid AELAB_AGENT_INSTALL_SCRIPT"
           exit 1
         fi
         log "installing agent runtime for ${kind}"
         bash "$script_path"
         ;;
       *)
-        echo "unsupported CLAWLAB_AGENT_INSTALL_KIND for ${kind}: ${CLAWLAB_AGENT_INSTALL_KIND}"
+        echo "unsupported AELAB_AGENT_INSTALL_KIND for ${kind}: ${AELAB_AGENT_INSTALL_KIND}"
         exit 1
         ;;
     esac
@@ -39,19 +39,11 @@ run_agent_kind_installers() {
 
 run_service_installers() {
   local service_id
-  local managed_service_id
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
-    if [[ "$service_id" == "caddy" ]]; then
-      while IFS= read -r managed_service_id; do
-        [[ -n "$managed_service_id" ]] || continue
-        log "installing service runtime for ${managed_service_id}"
-        run_service_installer "$managed_service_id"
-      done < <(caddy_managed_service_ids)
-    fi
     load_service_definition "$service_id"
-    case "${CLAWLAB_SERVICE_INSTALL_KIND:-}" in
+    case "${AELAB_SERVICE_INSTALL_KIND:-}" in
       "")
         ;;
       *)
@@ -69,23 +61,10 @@ cleanup_linux() {
   local unit_path
   local agent_id
   local has_agents=0
-  local managed_by_caddy
-  local managed_service_id
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
-    managed_by_caddy=0
-    if service_requested_from_env "caddy"; then
-      while IFS= read -r managed_service_id; do
-        if [[ "$managed_service_id" == "$service_id" ]]; then
-          managed_by_caddy=1
-          break
-        fi
-      done < <(caddy_managed_service_ids)
-    fi
-    if ((managed_by_caddy == 1)); then
-      continue
-    elif service_requested_from_env "$service_id"; then
+    if service_requested_from_env "$service_id"; then
       continue
     fi
     load_service_definition "$service_id"
@@ -130,8 +109,6 @@ cleanup_macos() {
   local preserved_ids=""
   local agent_id
   local current_id
-  local managed_by_caddy
-  local managed_service_id
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
@@ -143,27 +120,9 @@ cleanup_macos() {
     preserved_ids+=" $service_id"
   done < <(requested_service_ids_from_env)
 
-  if service_requested_from_env "caddy"; then
-    while IFS= read -r managed_service_id; do
-      [[ -n "$managed_service_id" ]] || continue
-      preserved_ids+=" $managed_service_id"
-    done < <(caddy_managed_service_ids)
-  fi
-
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
-    managed_by_caddy=0
-    if service_requested_from_env "caddy"; then
-      while IFS= read -r managed_service_id; do
-        if [[ "$managed_service_id" == "$service_id" ]]; then
-          managed_by_caddy=1
-          break
-        fi
-      done < <(caddy_managed_service_ids)
-    fi
-    if ((managed_by_caddy == 1)); then
-      continue
-    elif service_requested_from_env "$service_id"; then
+    if service_requested_from_env "$service_id"; then
       continue
     fi
     load_service_definition "$service_id"
@@ -180,7 +139,7 @@ cleanup_macos() {
 
   for plist in /Library/LaunchDaemons/"$(launchd_label_prefix)".*.plist; do
     [[ -e "$plist" ]] || continue
-    current_id="${plist##*.clawlab.}"
+    current_id="${plist##*.aelab.}"
     current_id="${current_id%.plist}"
     case " $preserved_ids " in
       *" $current_id "*) ;;
@@ -211,14 +170,39 @@ cleanup_service_manager_artifacts() {
   fi
 }
 
-if ! command -v brew >/dev/null 2>&1; then
-  echo "brew not found in PATH"
-  exit 1
-fi
+ensure_homebrew() {
+  local candidate
+
+  if command -v brew >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "installing Homebrew"
+  NONINTERACTIVE=1 /bin/bash -c \
+    "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  for candidate in \
+    /opt/homebrew/bin/brew \
+    /usr/local/bin/brew \
+    /home/linuxbrew/.linuxbrew/bin/brew \
+    "${HOME}/.linuxbrew/bin/brew"; do
+    if [[ -x "$candidate" ]]; then
+      eval "$("$candidate" shellenv)"
+      break
+    fi
+  done
+
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "brew install completed but brew not found on PATH — open a new shell and re-run" >&2
+    exit 1
+  fi
+}
+
+ensure_homebrew
 
 log "rendering Brewfile"
 bash "$(repo_root)/infra/commands/render.sh" brew
-ensure_clawlab_state_root
+ensure_aelab_state_root
 cleanup_service_manager_artifacts
 log "installing Homebrew dependencies"
 brew bundle --file "$INFRA_DIR/generated/Brewfile"

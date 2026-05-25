@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
-CLAWLAB_LOG_PREFIX="update"
+AELAB_LOG_PREFIX="update"
 load_host_env
 
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 
 usage() {
   cat <<'EOF'
@@ -17,14 +17,15 @@ Usage:
 Options:
   --no-pull             skip git pull --ff-only
   --no-restart          skip infra restart
+  -y, --yes             auto-confirm broad restart prompts
   --dry-run             print what would run without changing anything
   -h, --help            show this help
 
 Examples:
-  ./cmd infra update
-  ./cmd infra update caddy
-  ./cmd infra update services
-  ./cmd infra update dash-http dash-tty
+  ./ae infra update
+  ./ae infra update caddy
+  ./ae infra update services
+  ./ae infra update core-http core-tty
 EOF
 }
 
@@ -40,7 +41,7 @@ run() {
 }
 
 git_status_short() {
-  git -C "$CLAWLAB_ROOT" status --short
+  git -C "$AELAB_ROOT" status --short
 }
 
 confirm_broad_restart() {
@@ -76,12 +77,17 @@ confirm_broad_restart() {
     return 0
   fi
 
+  if ((YES == 1)); then
+    log "auto-confirmed via --yes"
+    return 0
+  fi
+
   if [[ ! -t 0 ]]; then
-    echo "broad restart requested in non-interactive mode; pass explicit targets or --no-restart" >&2
+    echo "broad restart requested in non-interactive mode; pass --yes, explicit targets, or --no-restart" >&2
     exit 1
   fi
 
-  printf '[update] Continue with broad restart? [y/N]: ' >&2
+  printf '[update] Continue with core restart? [y/N]: ' >&2
   read -r reply
   case "${reply,,}" in
     y|yes)
@@ -109,7 +115,7 @@ stash_local_changes() {
   printf '%s\n' "$status"
 
   STASHED=1
-  run git -C "$CLAWLAB_ROOT" stash push --include-untracked -m "clawlab update $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  run git -C "$AELAB_ROOT" stash push --include-untracked -m "aelab update $(date '+%Y-%m-%d %H:%M:%S %Z')"
 }
 
 restore_local_changes() {
@@ -119,12 +125,12 @@ restore_local_changes() {
 
   log "restoring stashed local changes"
   if ((DRY_RUN == 1)); then
-    run git -C "$CLAWLAB_ROOT" stash apply
+    run git -C "$AELAB_ROOT" stash apply
     return 0
   fi
 
-  if git -C "$CLAWLAB_ROOT" stash apply; then
-    git -C "$CLAWLAB_ROOT" stash drop >/dev/null
+  if git -C "$AELAB_ROOT" stash apply; then
+    git -C "$AELAB_ROOT" stash drop >/dev/null
     return 0
   fi
 
@@ -141,6 +147,7 @@ main() {
   DO_RESTART=1
   DRY_RUN=0
   STASHED=0
+  YES=0
 
   while (($#)); do
     arg="$1"
@@ -151,6 +158,9 @@ main() {
         ;;
       --no-restart)
         DO_RESTART=0
+        ;;
+      -y|--yes)
+        YES=1
         ;;
       --dry-run)
         DRY_RUN=1
@@ -177,17 +187,17 @@ main() {
   script_dir="$(cd "$(dirname "$0")" && pwd)"
 
   if ((${#restart_args[@]} == 0)); then
-    restart_args=(caddy)
+    restart_args=(core)
   fi
 
   log "fetching"
-  run git -C "$CLAWLAB_ROOT" fetch --prune
+  run git -C "$AELAB_ROOT" fetch --prune
 
   stash_local_changes
 
   if ((DO_PULL == 1)); then
     log "pulling latest with --ff-only"
-    run git -C "$CLAWLAB_ROOT" pull --ff-only
+    run git -C "$AELAB_ROOT" pull --ff-only
   else
     log "pull skipped"
   fi

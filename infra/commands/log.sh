@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
 load_host_env
 
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 TAIL_LINES=50
 
 usage() {
@@ -29,7 +29,6 @@ log_tail() {
 
 print_logs_for_item() {
   local item="$1"
-  local managed_service_id
   if is_agent_id "$item"; then
     log_tail "$(agent_stdout_log_path "$item")" "stdout"
     log_tail "$(agent_stderr_log_path "$item")" "stderr"
@@ -37,14 +36,6 @@ print_logs_for_item() {
     load_service_definition "$item"
     log_tail "$(service_stdout_log_path)" "stdout"
     log_tail "$(service_stderr_log_path)" "stderr"
-    if [[ "$item" == "caddy" ]]; then
-      while IFS= read -r managed_service_id; do
-        [[ -n "$managed_service_id" ]] || continue
-        load_service_definition "$managed_service_id"
-        log_tail "$(service_stdout_log_path)" "${managed_service_id} stdout"
-        log_tail "$(service_stderr_log_path)" "${managed_service_id} stderr"
-      done < <(caddy_managed_service_ids)
-    fi
   else
     echo "unknown service or agent id: $item"
     exit 1
@@ -96,7 +87,7 @@ main() {
   fi
 
   if ((${#requested[@]} == 0)); then
-    echo "No services requested."
+    print_no_requested_items_hint
     exit 0
   fi
 

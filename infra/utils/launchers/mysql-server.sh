@@ -2,8 +2,8 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-repo_root="$(cd "$script_dir/../.." && pwd)"
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$repo_root}"
+repo_root="$(cd "$script_dir/../../.." && pwd)"
+AELAB_ROOT="${AELAB_ROOT:-$repo_root}"
 
 port=3306
 while [[ $# -gt 0 ]]; do
@@ -13,7 +13,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-state_root="$CLAWLAB_ROOT/state/runtimes/mysql"
+state_root="$AELAB_ROOT/state/runtimes/mysql"
 data_dir="$state_root/data"
 socket_path="$state_root/mysql.sock"
 pid_file="$state_root/mysql.pid"

@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
+AELAB_LOG_PREFIX="render"
 load_host_env
 
-CLAWLAB_ROOT="${CLAWLAB_ROOT:-$(clawlab_root)}"
+AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 
 brewfile_path() {
   printf '%s/infra/generated/Brewfile' "$(repo_root)"
@@ -16,16 +17,16 @@ caddyfile_path() {
   printf '%s/infra/generated/Caddyfile' "$(repo_root)"
 }
 
-dash_page_template_path() {
-  printf '%s/infra/templates/dash-page.html' "$(repo_root)"
+index_template_path() {
+  printf '%s/infra/core/index.html' "$(repo_root)"
 }
 
 generated_web_root() {
-  printf '%s/infra/generated/caddy' "$(repo_root)"
+  printf '%s/infra/generated' "$(repo_root)"
 }
 
 generated_web_root_relative() {
-  printf '%s' "./generated/caddy"
+  printf '%s' "./generated"
 }
 
 generated_index_path() {
@@ -118,21 +119,21 @@ collect_service_packages() {
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
     load_service_definition "$service_id"
-    case "${CLAWLAB_SERVICE_INSTALL_OPTIONAL:-}" in
+    case "${AELAB_SERVICE_INSTALL_OPTIONAL:-}" in
       1|true|yes|on)
         continue
         ;;
     esac
-    append_tap_list "${CLAWLAB_SERVICE_BREW_TAPS:-}"
-    packages="${CLAWLAB_SERVICE_BREW_PACKAGES:-}"
-    casks="${CLAWLAB_SERVICE_BREW_CASKS:-}"
+    append_tap_list "${AELAB_SERVICE_BREW_TAPS:-}"
+    packages="${AELAB_SERVICE_BREW_PACKAGES:-}"
+    casks="${AELAB_SERVICE_BREW_CASKS:-}"
     if is_macos && is_arm64; then
-      packages="${CLAWLAB_SERVICE_BREW_PACKAGES_MACOS_ARM64:-$packages}"
-      casks="${CLAWLAB_SERVICE_BREW_CASKS_MACOS_ARM64:-$casks}"
+      packages="${AELAB_SERVICE_BREW_PACKAGES_MACOS_ARM64:-$packages}"
+      casks="${AELAB_SERVICE_BREW_CASKS_MACOS_ARM64:-$casks}"
     fi
     append_list "$packages"
     append_cask_list "$casks"
-  done < <(requested_service_ids_from_env)
+  done < <(requested_service_ids_with_groups_from_env)
 }
 
 collect_agent_packages() {
@@ -145,12 +146,12 @@ collect_agent_packages() {
     [[ -n "$agent_id" ]] || continue
     kind="$(known_agent_kind_for_id "$agent_id")" || continue
     load_agent_kind_definition "$kind"
-    append_tap_list "${CLAWLAB_AGENT_BREW_TAPS:-}"
-    packages="${CLAWLAB_AGENT_BREW_PACKAGES:-}"
-    casks="${CLAWLAB_AGENT_BREW_CASKS:-}"
+    append_tap_list "${AELAB_AGENT_BREW_TAPS:-}"
+    packages="${AELAB_AGENT_BREW_PACKAGES:-}"
+    casks="${AELAB_AGENT_BREW_CASKS:-}"
     if is_macos && is_arm64; then
-      packages="${CLAWLAB_AGENT_BREW_PACKAGES_MACOS_ARM64:-$packages}"
-      casks="${CLAWLAB_AGENT_BREW_CASKS_MACOS_ARM64:-$casks}"
+      packages="${AELAB_AGENT_BREW_PACKAGES_MACOS_ARM64:-$packages}"
+      casks="${AELAB_AGENT_BREW_CASKS_MACOS_ARM64:-$casks}"
     fi
     append_list "$packages"
     append_cask_list "$casks"
@@ -166,18 +167,20 @@ render_brewfile() {
   printf '# Based on config/custom/host/.env, config/custom/repo.ini, config/agents/*.env, config/custom/override/agents/*.env, config/services/*.env, and config/custom/override/services/*.env.\n'
   printf '\n'
 
-  if [[ "${#BREW_TAPS[@]}" -gt 0 ]]; then
+  if [[ -n "${BREW_TAPS[*]-}" ]]; then
     for tap in "${BREW_TAPS[@]}"; do
       printf 'tap "%s"\n' "$tap"
     done
     printf '\n'
   fi
 
-  for pkg in "${BREW_PACKAGES[@]}"; do
-    printf 'brew "%s"\n' "$pkg"
-  done
+  if [[ -n "${BREW_PACKAGES[*]-}" ]]; then
+    for pkg in "${BREW_PACKAGES[@]}"; do
+      printf 'brew "%s"\n' "$pkg"
+    done
+  fi
 
-  if [[ "${#BREW_CASKS[@]}" -gt 0 ]]; then
+  if [[ -n "${BREW_CASKS[*]-}" ]]; then
     printf '\n'
     for cask in "${BREW_CASKS[@]}"; do
       printf 'cask "%s"\n' "$cask"
@@ -202,7 +205,7 @@ lowercase() {
 }
 
 display_timezone() {
-  printf '%s' "${CLAWLAB_DISPLAY_TIMEZONE:-Europe/Belgrade}"
+  printf '%s' "${AELAB_DISPLAY_TIMEZONE:-Europe/Belgrade}"
 }
 
 normalize_host_alias() {
@@ -223,7 +226,7 @@ normalize_host_alias() {
 
 tailscale_section_name() {
   local selected
-  selected="${CLAWLAB_HOST:-${TAILSCALE_DNS_NAME:-$(hostname -s 2>/dev/null || hostname)}}"
+  selected="${AELAB_HOST:-${TAILSCALE_DNS_NAME:-$(hostname -s 2>/dev/null || hostname)}}"
   normalize_host_alias "$selected"
 }
 
@@ -237,6 +240,14 @@ html_escape() {
   value="${value//</&lt;}"
   value="${value//>/&gt;}"
   value="${value//\"/&quot;}"
+  printf '%s' "$value"
+}
+
+js_single_quote_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//$'\n'/\\n}"
+  value="${value//\'/\\\'}"
   printf '%s' "$value"
 }
 
@@ -334,12 +345,14 @@ prepare_agent_render_cache() {
   local start_args
   local status
   local tui_args
+  local tui_yolo_args
 
   RENDER_AGENT_IDS=()
   RENDER_AGENT_NAMES=()
   RENDER_AGENT_PORTS=()
   RENDER_AGENT_STATUSES=()
   RENDER_AGENT_TUI_ARGS=()
+  RENDER_AGENT_TUI_YOLO_ARGS=()
   RENDER_AGENT_START_ARGS=()
 
   for agent_id in "$@"; do
@@ -348,8 +361,9 @@ prepare_agent_render_cache() {
     dir_name="$(agent_directory_name "$agent_id")"
     port="$(agent_gateway_port "$agent_id")"
     load_agent_kind_definition "$kind"
-    tui_args="${CLAWLAB_AGENT_TUI_ARGS:-}"
-    start_args="${CLAWLAB_AGENT_START_ARGS:-}"
+    tui_args="${AELAB_AGENT_TUI_ARGS:-}"
+    tui_yolo_args="${AELAB_AGENT_TUI_YOLO_ARGS:-}"
+    start_args="${AELAB_AGENT_START_ARGS:-}"
     status="$(agent_status_for_start_args "$agent_id" "$start_args")"
 
     RENDER_AGENT_IDS+=("$agent_id")
@@ -357,6 +371,7 @@ prepare_agent_render_cache() {
     RENDER_AGENT_PORTS+=("$port")
     RENDER_AGENT_STATUSES+=("$status")
     RENDER_AGENT_TUI_ARGS+=("$tui_args")
+    RENDER_AGENT_TUI_YOLO_ARGS+=("$tui_yolo_args")
     RENDER_AGENT_START_ARGS+=("$start_args")
   done
 }
@@ -392,7 +407,7 @@ render_agent_links_html() {
     if [[ -n "$port" ]]; then
       details_html="<span class=\"detail-port\">port: <code>$(html_escape "$port")</code></span>"
     fi
-    render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" "$actions_html"
+    render_index_row_html "$title_html" "$status_class" "$status" "$details_html" "$actions_html"
   done
 }
 
@@ -412,7 +427,7 @@ status_class_for_state() {
   fi
 }
 
-render_dashboard_row_html() {
+render_index_row_html() {
   local title_html="$1"
   local status_class="$2"
   local status="$3"
@@ -428,7 +443,7 @@ render_dashboard_row_html() {
     actions_block="<div class=\"row-actions\">${actions_html}</div>"
   fi
 
-  printf '        <li class="dashboard-row"><div class="row-main"><div class="row-title">%s%s</div><div class="row-details">%s</div></div>%s</li>\n' \
+  printf '        <li class="index-row"><div class="row-main"><div class="row-title">%s%s</div><div class="row-details">%s</div></div>%s</li>\n' \
     "$title_html" \
     "$status_html" \
     "$details_html" \
@@ -443,11 +458,8 @@ render_service_links_html() {
   local service_id_html
   local status
   local status_class
-  local managed_root_id
   local title_html
   local details_html
-
-  managed_root_id="$(caddy_root_service_id)"
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
@@ -458,29 +470,17 @@ render_service_links_html() {
       running|active|interactive) ;;
       *) continue ;;
     esac
-    route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
+    route="$(expand_runtime_placeholders "${AELAB_SERVICE_CADDY_ROUTE:-}")"
     service_id_html="$(html_escape "$service_id")"
-    if [[ -n "$managed_root_id" && "$service_id" == "$managed_root_id" ]]; then
-      local managed_port_html=""
-      local managed_path_html=""
-      if [[ -n "${CLAWLAB_SERVICE_PORT:-}" ]]; then
-        managed_port_html="<span class=\"detail-port\">port: <code>$(html_escape "$CLAWLAB_SERVICE_PORT")</code></span>"
-      fi
-      managed_path_html="<span class=\"detail-path\">path: <code>/</code></span>"
-      title_html="<span class=\"item-name\">${service_id_html}</span>"
-      details_html="${managed_port_html}${managed_port_html:+ }${managed_path_html}"
-      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
-      continue
-    fi
     if [[ "$route" == /* ]]; then
       route_html="$(html_escape "$route")"
       local managed_port_html=""
-      if [[ -n "${CLAWLAB_SERVICE_PORT:-}" ]]; then
-        managed_port_html="<span class=\"detail-port\">port: <code>$(html_escape "$CLAWLAB_SERVICE_PORT")</code></span>"
+      if [[ -n "${AELAB_SERVICE_PORT:-}" ]]; then
+        managed_port_html="<span class=\"detail-port\">port: <code>$(html_escape "$AELAB_SERVICE_PORT")</code></span>"
       fi
-      title_html="<span class=\"item-name\">${service_id_html}</span>"
+      title_html="<a href=\"$(html_escape "${route%/}/")\" target=\"_blank\" rel=\"noreferrer\">${service_id_html}</a>"
       details_html="${managed_port_html}${managed_port_html:+ }<span class=\"detail-path\">path: <code>${route_html}</code></span>"
-      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
+      render_index_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
     if [[ "$route" == :* ]]; then
@@ -488,19 +488,19 @@ render_service_links_html() {
       route_html="$(html_escape "$route_port")"
       title_html="<span class=\"item-name\">${service_id_html}</span>"
       details_html="<span class=\"detail-port\">port: <code>${route_html}</code></span>"
-      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
+      render_index_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
     if [[ -n "$route" ]]; then
       route_html="$(html_escape "$route")"
       title_html="<span class=\"item-name\">${service_id_html}</span>"
       details_html="<span>host: <code>${route_html}</code></span>"
-      render_dashboard_row_html "$title_html" "$status_class" "$status" "$details_html" ""
+      render_index_row_html "$title_html" "$status_class" "$status" "$details_html" ""
       continue
     fi
     title_html="<span class=\"item-name\">${service_id_html}</span>"
-    render_dashboard_row_html "$title_html" "$status_class" "$status" "" ""
-  done < <(service_definition_ids)
+    render_index_row_html "$title_html" "$status_class" "$status" "" ""
+  done < <(requested_service_ids_from_env)
 }
 
 render_action_menu_html() {
@@ -513,11 +513,15 @@ render_action_menu_html() {
   local start_args
   local tui_args
   local option_url
+  local shell_url
   local tool_html=""
   local sections_html=""
+  local yolo_agent_html=""
+  local tui_yolo_args
+  local status
 
-  option_url="/tty/$(url_encode_path_segment "$target")/"
-  tool_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">shell</a>"$'\n'
+  shell_url="/tty/$(url_encode_path_segment "$target")/"
+  tool_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$shell_url")\" target=\"_blank\" rel=\"noreferrer\">shell</a>"$'\n'
 
   for index in "${!RENDER_AGENT_IDS[@]}"; do
     agent_id="${RENDER_AGENT_IDS[$index]}"
@@ -527,26 +531,38 @@ render_action_menu_html() {
     tui_args="${RENDER_AGENT_TUI_ARGS[$index]}"
     [[ -n "$tui_args" ]] || continue
     start_args="${RENDER_AGENT_START_ARGS[$index]}"
+    status="${RENDER_AGENT_STATUSES[$index]}"
     if [[ -z "$start_args" ]]; then
       interactive_agent_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"$'\n'
-    else
+    elif [[ "$status" == "running" || "$status" == "active" ]]; then
       agent_html+="            <a class=\"action-menu-item\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"$'\n'
+    fi
+    tui_yolo_args="${RENDER_AGENT_TUI_YOLO_ARGS[$index]}"
+    if [[ -n "$tui_yolo_args" ]]; then
+      option_url="/tty/$(url_encode_path_segment "$target")/${agent_id}/yolo/"
+      yolo_agent_html+="            <a class=\"action-menu-item action-menu-item-yolo\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"$'\n'
     fi
   done
 
-  sections_html+="            <div class=\"action-menu-section\">"$'\n'
+  sections_html+="            <div class=\"action-menu-section\" data-open-with-section data-terminal-path=\"$(html_escape "$shell_url")\">"$'\n'
   sections_html+="              <div class=\"action-menu-heading\">open with</div>"$'\n'
   sections_html+="$tool_html"
   sections_html+="            </div>"$'\n'
   if [[ -n "$interactive_agent_html" ]]; then
     sections_html+="            <div class=\"action-menu-section\">"$'\n'
-    sections_html+="              <div class=\"action-menu-heading\">interactive agents</div>"$'\n'
+    sections_html+="              <div class=\"action-menu-heading\">interactive</div>"$'\n'
     sections_html+="$interactive_agent_html"
+    sections_html+="            </div>"$'\n'
+  fi
+  if [[ -n "$yolo_agent_html" ]]; then
+    sections_html+="            <div class=\"action-menu-section\">"$'\n'
+    sections_html+="              <div class=\"action-menu-heading\">yolo</div>"$'\n'
+    sections_html+="$yolo_agent_html"
     sections_html+="            </div>"$'\n'
   fi
   if [[ -n "$agent_html" ]]; then
     sections_html+="            <div class=\"action-menu-section\">"$'\n'
-    sections_html+="              <div class=\"action-menu-heading\">running agents</div>"$'\n'
+    sections_html+="              <div class=\"action-menu-heading\">running</div>"$'\n'
     sections_html+="$agent_html"
     sections_html+="            </div>"$'\n'
   fi
@@ -561,8 +577,30 @@ ${sections_html}          </div>
 EOF
 }
 
+render_host_yolo_menu_section_js() {
+  local agent_id
+  local dir_name
+  local index
+  local option_url
+  local yolo_agent_html=""
+  local tui_yolo_args
+
+  for index in "${!RENDER_AGENT_IDS[@]}"; do
+    agent_id="${RENDER_AGENT_IDS[$index]}"
+    [[ -n "$agent_id" ]] || continue
+    tui_yolo_args="${RENDER_AGENT_TUI_YOLO_ARGS[$index]}"
+    [[ -n "$tui_yolo_args" ]] || continue
+    dir_name="${RENDER_AGENT_NAMES[$index]}"
+    option_url="/tty/$(url_encode_path_segment "$agent_id")/yolo/"
+    yolo_agent_html+="<a class=\"action-menu-item action-menu-item-yolo\" href=\"$(html_escape "$option_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$dir_name")</a>"
+  done
+
+  [[ -n "$yolo_agent_html" ]] || return 0
+  js_single_quote_escape "<div class=\"action-menu-section\"><div class=\"action-menu-heading\">yolo</div>${yolo_agent_html}</div>"
+}
+
 render_project_links_html() {
-  local raw="${CLAWLAB_PROJECTS:-}"
+  local raw="${AELAB_PROJECTS:-}"
   local item
   local title
   local path
@@ -584,18 +622,18 @@ render_project_links_html() {
     actions_html="$(render_action_menu_html "$title")"
     title_html="<a href=\"$(html_escape "$project_url")\" target=\"_blank\" rel=\"noreferrer\">$(html_escape "$title")</a>"
     details_html="<span class=\"detail-path\">path: <code>$(html_escape "$path")</code></span>"
-    render_dashboard_row_html "$title_html" "" "" "$details_html" "$actions_html"
+    render_index_row_html "$title_html" "" "" "$details_html" "$actions_html"
   done
 }
 
-render_dash_section_html() {
+render_index_section_html() {
   local section_id="$1"
   local title="$2"
   local links_html="$3"
 
   [[ -n "$links_html" ]] || return 0
   cat <<EOF
-    <section class="dashboard-section" data-section="$(html_escape "$section_id")">
+    <section class="index-section" data-section="$(html_escape "$section_id")">
       <h2><button class="section-toggle" type="button" aria-expanded="true"><span class="section-caret">▾</span><span>$(html_escape "$title")</span></button></h2>
       <ul>
 ${links_html}
@@ -622,22 +660,8 @@ service_status() {
   printf '%s' "unknown"
 }
 
-caddy_root_upstream() {
-  local service_id
-
-  if ! service_requested_from_env "caddy"; then
-    return 0
-  fi
-
-  service_id="$(caddy_root_service_id)"
-  [[ -n "$service_id" ]] || return 0
-
-  load_service_definition "$service_id"
-  printf '%s' "$(expand_runtime_placeholders "$CLAWLAB_SERVICE_CADDY_ROOT_UPSTREAM")"
-}
-
 tailscale_only_enabled() {
-  case "${CLAWLAB_TAILSCALE_ONLY:-}" in
+  case "${AELAB_TAILSCALE_ONLY:-}" in
     1|true|yes|on) return 0 ;;
     *) return 1 ;;
   esac
@@ -650,41 +674,43 @@ render_index_html() {
   local project_links_html
   local service_links_html
   local sections_html
+  local host_yolo_menu_section_js
   local tailscale_nav_html
   local current_section
   local rendered
-  local -a ids=("$@")
 
   host_name="$(hostname -s 2>/dev/null || hostname)"
   current_section="$(tailscale_section_name)"
   generated_at="$(TZ="$(display_timezone)" date +"%Y-%m-%d %H:%M:%S %Z")"
-  prepare_agent_render_cache "${ids[@]}"
+  prepare_agent_render_cache "$@"
   agent_links_html="$(render_agent_links_html)"
   project_links_html="$(render_project_links_html)"
   service_links_html="$(render_service_links_html)"
-  sections_html="$(render_dash_section_html "agents" "agents" "$agent_links_html")"
-  if [[ -n "$project_links_html" ]]; then
+  host_yolo_menu_section_js="$(render_host_yolo_menu_section_js)"
+  sections_html="$(render_index_section_html "projects" "projects" "$project_links_html")"
+  if [[ -n "$agent_links_html" ]]; then
     if [[ -n "$sections_html" ]]; then
-      sections_html="${sections_html}"$'\n'"$(render_dash_section_html "projects" "projects" "$project_links_html")"
+      sections_html="${sections_html}"$'\n'"$(render_index_section_html "agents" "agents" "$agent_links_html")"
     else
-      sections_html="$(render_dash_section_html "projects" "projects" "$project_links_html")"
+      sections_html="$(render_index_section_html "agents" "agents" "$agent_links_html")"
     fi
   fi
   if [[ -n "$service_links_html" ]]; then
     if [[ -n "$sections_html" ]]; then
-      sections_html="${sections_html}"$'\n'"$(render_dash_section_html "services" "services" "$service_links_html")"
+      sections_html="${sections_html}"$'\n'"$(render_index_section_html "services" "services" "$service_links_html")"
     else
-      sections_html="$(render_dash_section_html "services" "services" "$service_links_html")"
+      sections_html="$(render_index_section_html "services" "services" "$service_links_html")"
     fi
   fi
   tailscale_nav_html="$(render_tailscale_nav_html "$current_section")"
   rendered="$(mktemp)"
 
-  render_template "$(dash_page_template_path)" "$rendered" \
-    __PAGE_TITLE__ "clawlab on $(html_escape "$host_name")" \
+  render_template "$(index_template_path)" "$rendered" \
+    __PAGE_TITLE__ "$(aelab_name) on $(html_escape "$host_name")" \
     __HOST_NAME__ "$(html_escape "$host_name")" \
     __TAILSCALE_NAV_HTML__ "$tailscale_nav_html" \
     __AGENT_LINKS_HTML__ "$sections_html" \
+    __HOST_YOLO_MENU_SECTION_JS__ "$host_yolo_menu_section_js" \
     __GENERATED_AT__ "$generated_at"
   cat "$rendered"
   rm -f "$rendered"
@@ -697,13 +723,13 @@ render_managed_block() {
   local route
   local site_address
   local upstream
-  local root_upstream
+  local root_route_upstream=""
 
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
     load_service_definition "$service_id"
-    route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
-    upstream="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}")"
+    route="$(expand_runtime_placeholders "${AELAB_SERVICE_CADDY_ROUTE:-}")"
+    upstream="$(expand_runtime_placeholders "${AELAB_SERVICE_CADDY_UPSTREAM:-}")"
     [[ -n "$route" && "$route" != /* && -n "$upstream" ]] || continue
     site_address="$route"
     if [[ "$site_address" != :* && "$site_address" != *:* ]]; then
@@ -760,10 +786,11 @@ EOF
   while IFS= read -r service_id; do
     [[ -n "$service_id" ]] || continue
     load_service_definition "$service_id"
-    route="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_ROUTE:-}")"
-    upstream="$(expand_runtime_placeholders "${CLAWLAB_SERVICE_CADDY_UPSTREAM:-}")"
+    route="$(expand_runtime_placeholders "${AELAB_SERVICE_CADDY_ROUTE:-}")"
+    upstream="$(expand_runtime_placeholders "${AELAB_SERVICE_CADDY_UPSTREAM:-}")"
     [[ "$route" == /* && -n "$upstream" ]] || continue
     if [[ "$route" == "/" ]]; then
+      root_route_upstream="$upstream"
       continue
     fi
     cat <<EOF
@@ -772,30 +799,14 @@ EOF
       reverse_proxy ${upstream}
     }
 EOF
-  done < <(caddy_root_service_ids)
+  done < <(requested_service_ids_from_env)
 
-  root_upstream="$(caddy_root_upstream)"
-
-  if [[ -n "$root_upstream" ]]; then
-    if tailscale_only_enabled; then
-      cat <<EOF
+  if [[ -n "$root_route_upstream" ]]; then
+    cat <<EOF
     handle {
-      reverse_proxy ${root_upstream}
+      reverse_proxy ${root_route_upstream}
     }
-  }
-
-  respond "forbidden" 403
-}
 EOF
-    else
-      cat <<EOF
-  handle {
-    reverse_proxy ${root_upstream}
-  }
-}
-EOF
-    fi
-    return
   fi
 
   if tailscale_only_enabled; then
@@ -830,14 +841,14 @@ write_caddyfile() {
   mkdir -p "$(dirname "$(caddyfile_path)")"
   cat <<EOF > "$tmp_file"
 # Generated by infra/commands/render.sh caddy. Do not edit manually.
-# Clawlab owns this root Caddyfile and imports:
-# - optional host-local site configs under /etc/clawlab/*.caddy
+# $(aelab_name) owns this root Caddyfile and imports:
+# - optional host-local site configs under $(aelab_caddy_import_dir)/*.caddy
 
-import /etc/clawlab/*.caddy
+import $(aelab_caddy_import_dir)/*.caddy
 
-# BEGIN CLAWLAB MANAGED
+# BEGIN AELAB MANAGED
 $(render_managed_block "$@")
-# END CLAWLAB MANAGED
+# END AELAB MANAGED
 EOF
   overwrite_file_preserving_metadata "$tmp_file" "$(caddyfile_path)"
   if command -v caddy >/dev/null 2>&1; then
@@ -846,6 +857,7 @@ EOF
 }
 
 render_brew_target() {
+  local package_count
   BREW_TAPS=()
   BREW_PACKAGES=()
   BREW_CASKS=()
@@ -854,7 +866,12 @@ render_brew_target() {
   collect_agent_packages
   mkdir -p "$(dirname "$(brewfile_path)")"
   render_brewfile > "$(brewfile_path)"
-  log_verbose "[rendered] $(brewfile_path) with ${#BREW_PACKAGES[@]} packages"
+  package_count=0
+  if [[ -n "${BREW_PACKAGES[*]-}" ]]; then
+    package_count="${#BREW_PACKAGES[@]}"
+  fi
+  log "rendered $(brewfile_path) (${package_count} packages)"
+  log --verbose "[rendered] $(brewfile_path) with ${package_count} packages"
 }
 
 collect_render_gateway_agent_ids() {
@@ -887,7 +904,7 @@ collect_render_agent_ids() {
   done < <(requested_agent_ids_from_env)
 }
 
-render_dash_target() {
+render_index_target() {
   local -a requested_agents=()
   local agent_id
 
@@ -897,27 +914,33 @@ render_dash_target() {
   done < <(collect_render_agent_ids)
 
   write_index_html "${requested_agents[@]+"${requested_agents[@]}"}"
-  log_verbose "[rendered] $(generated_index_path) from $(dash_page_template_path)"
+  log "rendered $(generated_index_path)"
+  log --verbose "[rendered] $(generated_index_path) from $(index_template_path)"
 }
 
 render_caddy_target() {
   local -a requested_agents=()
   local agent_id
+  local route_count=0
 
   while IFS= read -r agent_id; do
     [[ -n "$agent_id" ]] || continue
     requested_agents+=("$agent_id")
   done < <(collect_render_gateway_agent_ids)
 
-  render_dash_target >/dev/null
+  render_index_target >/dev/null
   write_caddyfile "${requested_agents[@]+"${requested_agents[@]}"}"
-  log_verbose "[rendered] $(caddyfile_path) with ${#requested_agents[@]} agent routes"
+  if [[ -n "${requested_agents[*]-}" ]]; then
+    route_count="${#requested_agents[@]}"
+  fi
+  log "rendered $(caddyfile_path) (${route_count} agent routes)"
+  log --verbose "[rendered] $(caddyfile_path) with ${route_count} agent routes"
 }
 
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [all|brew|caddy]
+  $(basename "$0") [all|brew|caddy|front]
 EOF
 }
 
@@ -935,8 +958,8 @@ main() {
     caddy)
       render_caddy_target
       ;;
-    dash)
-      render_dash_target
+    front)
+      render_index_target
       ;;
     -h|--help|help)
       usage

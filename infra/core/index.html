@@ -1,9 +1,22 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-host="__HOST_NAME__">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>__PAGE_TITLE__</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const theme = localStorage.getItem('theme');
+      if (theme === 'dark' || theme === 'light') {
+        root.dataset.theme = theme;
+      }
+      const tint = localStorage.getItem('aelab-tint:' + root.dataset.host);
+      if (tint) {
+        root.style.setProperty('--accent', tint);
+      }
+    })();
+  </script>
   <style>
     :root {
       color-scheme: light;
@@ -59,32 +72,33 @@
     html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); transition: background-color 180ms ease, color 180ms ease; }
     main { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
-    .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { display: inline-flex; align-items: center; gap: 8px; min-width: 0; line-height: 1; }
     .host-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
-    .host-block { margin: 0 0 16px; }
+    .host-block { margin: 6px 0 16px; position: relative; z-index: 2; }
     .host-row { margin: 0; }
     .host-row p { display: inline-flex; align-items: center; gap: 4px; margin: 0; min-height: 24px; }
     .host-terminals { margin-top: 12px; }
     .host-terminals[hidden] { display: none; }
     .host-terminals.is-collapsed ul { display: none; }
-    h1 { margin: 0 0 8px; font-size: 2rem; }
+    h1 { margin: 0 0 8px; font-size: 2rem; line-height: 1; }
     .title-link { color: inherit; font-weight: inherit; text-decoration: none; }
     .title-link:hover { color: var(--accent); text-decoration: none; }
     .title-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
     p { margin: 0 0 16px; }
     .meta { color: var(--muted); margin-top: 28px; display: grid; gap: 4px; font-size: 1rem; }
     .meta p { margin: 0; }
-    .dashboard-section { margin-top: 24px; }
-    .dashboard-section h2 { margin: 0 0 12px; font-size: 0.95rem; line-height: 1.2; }
+    .index-section { margin-top: 24px; }
+    .index-section h2 { margin: 0 0 12px; font-size: 0.95rem; line-height: 1.2; }
     .section-toggle { appearance: none; border: 0; background: transparent; color: var(--text); padding: 0; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; }
     .section-toggle:hover { color: var(--accent); }
     .section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
     .section-caret { display: inline-block; width: 0.7em; transition: transform 160ms ease; }
-    .dashboard-section.is-collapsed .section-caret { transform: rotate(-90deg); }
-    .dashboard-section.is-collapsed ul { display: none; }
+    .index-section.is-collapsed .section-caret { transform: rotate(-90deg); }
+    .index-section.is-collapsed ul { display: none; }
     ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
     li { padding: 14px 16px; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; transition: background-color 180ms ease, border-color 180ms ease; }
-    .dashboard-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: center; }
+    .index-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: center; }
     .row-main { min-width: 0; display: grid; gap: 6px; }
     .row-title { min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; line-height: 1.2; }
     .row-title > a, .row-title > .item-name { min-width: 0; overflow-wrap: anywhere; font-size: 1.08rem; }
@@ -97,7 +111,7 @@
     .item-name { color: var(--text); font-weight: 600; }
     small { color: var(--muted); margin-left: 8px; display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
     code { background: var(--code-bg); padding: 2px 6px; border-radius: 6px; transition: background-color 180ms ease; }
-    .tailscale-row { display: grid; gap: 0; margin: 0 0 24px; max-width: 100%; min-width: 0; }
+    .tailscale-row { display: grid; gap: 0; margin: 0 0 24px; max-width: 100%; min-width: 0; position: relative; z-index: 1; }
     .tailscale-row.has-sessions-open .segmented-shell { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
     .segmented-shell { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 10px 6px; background: var(--control-bg); border-radius: 12px; margin: 0; transition: background-color 180ms ease; }
     .segmented { display: flex; min-width: 0; max-width: 100%; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin: 0; -webkit-overflow-scrolling: touch; }
@@ -113,6 +127,7 @@
     .segment-tint-picker::-webkit-color-swatch { border: 0; }
     .segment-tint-picker::-moz-color-swatch { border: 0; }
     .controls { display: inline-flex; align-items: center; gap: 8px; }
+    .theme-toggle { width: 24px; height: 24px; font-size: 0.8rem; }
     .icon-button { appearance: none; border: 1px solid var(--panel-border); background: var(--panel); color: var(--text); width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; font-weight: 600; line-height: 1; text-decoration: none; transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease, color 180ms ease, opacity 180ms ease; }
     .icon-button:hover { transform: translateY(-1px); text-decoration: none; }
     .icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -134,8 +149,8 @@
     .segmented-action-button { align-self: center; margin-left: 2px; }
     .host-tint-circle { background: transparent; border-color: transparent; }
     .host-tint-circle:hover { transform: none; background: transparent; border-color: transparent; opacity: 1; }
-    .host-tint-mark { width: 24px; height: 24px; border: 3px solid var(--accent); border-radius: 999px; background: transparent; pointer-events: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
-    .host-tint-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
+    .host-tint-mark { width: 20px; height: 20px; border: 3px solid var(--accent); border-radius: 999px; background: transparent; pointer-events: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+    .host-tint-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); flex-shrink: 0; }
     .row-action-button.is-active:not(.host-tint-circle) { background: color-mix(in srgb, var(--control-active-bg) 22%, transparent); color: var(--control-active-bg); border-color: transparent; }
     .row-action-button.is-active:not(.host-tint-circle):hover { transform: none; background: var(--control-active-bg); border-color: var(--control-active-bg); color: var(--control-active-text); opacity: 1; }
     .host-sessions-panel { background: var(--control-bg); border-radius: 0 0 12px 12px; padding: 10px 6px 10px; transition: background-color 180ms ease; }
@@ -154,6 +169,7 @@
     .action-menu-section + .action-menu-section { border-top: 1px solid var(--panel-border); margin-top: 4px; padding-top: 4px; }
     .action-menu-heading { color: var(--muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.2; padding: 5px 8px 3px; text-transform: uppercase; }
     .action-menu-item { color: var(--text); font-weight: 600; padding: 7px 8px; border-radius: 6px; white-space: nowrap; }
+    .action-menu-item-yolo { color: #b42318; }
     .action-menu-item-numbered { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: center; }
     .terminal-number { width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--control-active-bg) 22%, transparent); color: var(--control-active-bg); font-size: 0.78rem; line-height: 1; font-weight: 800; }
     .action-menu-item:hover { background: var(--control-bg); text-decoration: none; color: var(--accent); }
@@ -165,29 +181,31 @@
     .status-unavailable { background: var(--status-unavailable-bg); color: var(--status-unavailable-text); }
     .status-unknown { background: var(--status-unknown-bg); color: var(--status-unknown-text); }
     @media (max-width: 640px) {
-    .topbar { align-items: flex-start; }
-    .controls { align-self: flex-start; margin-left: auto; }
+    .controls { margin-left: auto; }
     }
   </style>
 </head>
 <body>
   <main>
     <div class="topbar">
-      <h1><a class="title-link" href="/" aria-label="Open dashboard">clawlab</a></h1>
+      <div class="brand">
+        <label class="tint-trigger icon-button row-action-button host-tint-circle" title="Change accent tint for this host" aria-label="Change accent tint for this host"><span class="host-tint-mark" aria-hidden="true"><span class="host-tint-dot"></span></span><input class="segment-tint-picker" id="active-tint-picker" type="color" value="#0f766e" data-host="__HOST_NAME__" aria-label="Choose accent tint for this host"></label>
+        <h1><a class="title-link" href="/" aria-label="Open dashboard">aelab</a></h1>
+      </div>
       <div class="controls">
-        <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle light and dark mode" title="Toggle light and dark mode">◐</button>
+        <button class="icon-button theme-toggle" id="theme-toggle" type="button" aria-label="Toggle light and dark mode" title="Toggle light and dark mode">◐</button>
       </div>
     </div>
     <div class="host-block">
       <div class="host-row">
-        <p><label class="tint-trigger icon-button row-action-button host-tint-circle" title="Change accent tint for this host" aria-label="Change accent tint for this host"><span class="host-tint-mark" aria-hidden="true"><span class="host-tint-dot"></span></span><input class="segment-tint-picker" id="active-tint-picker" type="color" value="#0f766e" data-host="__HOST_NAME__" aria-label="Choose accent tint for this host"></label> <code>__HOST_NAME__</code></p>
+        <p><code>__HOST_NAME__</code></p>
         <details class="action-menu host-action-menu" id="host-terminal-menu">
-          <summary class="icon-button row-action-button" aria-label="Open host terminal menu" title="Open terminal">
+          <summary class="icon-button row-action-button" aria-label="Actions" title="Actions">
             <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           </summary>
           <div class="action-menu-panel" id="host-terminal-menu-panel">
             <div class="action-menu-section">
-              <a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">New host shell</a>
+              <a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">shell</a>
             </div>
           </div>
         </details>
@@ -219,7 +237,7 @@ __AGENT_LINKS_HTML__
       const themeToggle = document.getElementById('theme-toggle');
       const tintPicker = document.getElementById('active-tint-picker');
       const resetLook = document.getElementById('reset-look');
-      const sections = Array.from(document.querySelectorAll('.dashboard-section'));
+      const sections = Array.from(document.querySelectorAll('.index-section'));
       const actionMenus = Array.from(document.querySelectorAll('.action-menu'));
       const tailscaleRow = document.querySelector('.tailscale-row');
       const hostList = document.querySelector('.segmented');
@@ -229,10 +247,10 @@ __AGENT_LINKS_HTML__
       const hostTerminalMenuPanel = document.getElementById('host-terminal-menu-panel');
       let terminalShortcutTargets = [];
       const themeKey = 'theme';
-      const tintKey = 'clawlab-tint';
       const lookURL = '/tty/look';
-      const activeHost = tintPicker?.dataset.host || '';
-      const sectionKeyPrefix = 'clawlab-section-collapsed:';
+      const activeHost = root.dataset.host || '';
+      const tintKey = `aelab-tint:${activeHost}`;
+      const sectionKeyPrefix = 'aelab-section-collapsed:';
       const storedTheme = localStorage.getItem(themeKey);
       const storedTint = localStorage.getItem(tintKey);
       const currentDefaultTint = () => getComputedStyle(root).getPropertyValue('--accent-default').trim() || '#0f766e';
@@ -263,16 +281,23 @@ __AGENT_LINKS_HTML__
         }
         localStorage.setItem(tintKey, value);
       };
+      const applyTheme = (value) => {
+        if (value !== 'dark' && value !== 'light') return;
+        root.dataset.theme = value;
+        localStorage.setItem(themeKey, value);
+        if (!localStorage.getItem(tintKey) && tintPicker) {
+          tintPicker.value = currentDefaultTint();
+        }
+      };
       const resetTint = () => {
-        root.dataset.theme = 'light';
-        localStorage.setItem(themeKey, 'light');
+        applyTheme('light');
         root.style.removeProperty('--accent');
         if (tintPicker) {
           tintPicker.value = currentDefaultTint();
         }
         localStorage.removeItem(tintKey);
         if (activeHost) {
-          saveLook({ tintByHost: { [activeHost]: null } });
+          saveLook({ theme: 'light', tintByHost: { [activeHost]: null } });
         }
       };
 
@@ -295,11 +320,8 @@ __AGENT_LINKS_HTML__
 
       themeToggle?.addEventListener('click', () => {
         const nextTheme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-        root.dataset.theme = nextTheme;
-        localStorage.setItem(themeKey, nextTheme);
-        if (!localStorage.getItem(tintKey) && tintPicker) {
-          tintPicker.value = currentDefaultTint();
-        }
+        applyTheme(nextTheme);
+        saveLook({ theme: nextTheme });
       });
 
       resetLook?.addEventListener('click', (event) => {
@@ -322,6 +344,7 @@ __AGENT_LINKS_HTML__
       });
 
       function applyLook(look) {
+        applyTheme(look?.theme);
         const tint = activeHost ? look?.tintByHost?.[activeHost] : null;
         if (tint && tintPicker) {
           applyTint(tint);
@@ -379,10 +402,24 @@ __AGENT_LINKS_HTML__
         }
       };
 
+      const clampMenuPanelIntoView = (menu) => {
+        const panel = menu.querySelector('.action-menu-panel');
+        if (!panel) return;
+        panel.style.transform = '';
+        const rect = panel.getBoundingClientRect();
+        const margin = 8;
+        if (rect.left < margin) {
+          panel.style.transform = `translateX(${margin - rect.left}px)`;
+        } else if (rect.right > window.innerWidth - margin) {
+          panel.style.transform = `translateX(${window.innerWidth - margin - rect.right}px)`;
+        }
+      };
+
       for (const menu of actionMenus) {
         menu.addEventListener('toggle', () => {
           if (menu.open) {
             closeActionMenus(menu);
+            clampMenuPanelIntoView(menu);
           }
         });
         menu.addEventListener('click', (event) => {
@@ -393,6 +430,42 @@ __AGENT_LINKS_HTML__
       }
 
       document.addEventListener('click', (event) => {
+        const tmuxWindowItem = event.target.closest('[data-tmux-window-session]');
+        if (tmuxWindowItem) {
+          event.preventDefault();
+          const session = tmuxWindowItem.dataset.tmuxWindowSession || '';
+          const terminalPath = tmuxWindowItem.dataset.terminalPath || '';
+          if (!session || !terminalPath) return;
+          const fallbackPath = `/tty/tmux/${encodeURIComponent(session)}/`;
+          const opened = window.open('about:blank', '_blank');
+          if (opened) {
+            opened.opener = null;
+          }
+          fetch('/tty/tmux/window', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session, terminalPath }),
+            cache: 'no-store',
+          })
+            .then((response) => response.ok ? response.json() : Promise.reject(new Error('tmux window failed')))
+            .then((payload) => {
+              const path = String(payload.path || fallbackPath);
+              if (opened) {
+                opened.location = path;
+              } else {
+                window.location.href = path;
+              }
+              refreshSessions();
+            })
+            .catch(() => {
+              if (opened) {
+                opened.location = fallbackPath;
+              } else {
+                window.location.href = fallbackPath;
+              }
+            });
+          return;
+        }
         if (!event.target.closest('.action-menu')) {
           closeActionMenus();
         }
@@ -431,7 +504,7 @@ __AGENT_LINKS_HTML__
         const tmuxSessions = Array.isArray(payload?.tmuxSessions) ? payload.tmuxSessions : [];
         const terminalTargets = [
           ...pinned.map((session) => ({
-            kind: 'clawlab',
+            kind: 'aelab',
             path: String(session.path || session.key || '/tty/'),
             label: String(session.projectTitle || session.agentId || session.path || session.key || '/tty/'),
             clients: Number.isFinite(Number(session.clients)) ? Number(session.clients) : 0,
@@ -460,7 +533,7 @@ __AGENT_LINKS_HTML__
           }
         });
         if (hostTerminalMenuPanel) {
-          const pinnedItems = terminalTargets.filter((target) => target.kind === 'clawlab').map((target) => {
+          const pinnedItems = terminalTargets.filter((target) => target.kind === 'aelab').map((target) => {
             const number = numberForPath.get(target.path) || '';
             return `<a class="action-menu-item action-menu-item-numbered" href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span><span>${escapeHTML(target.label)}</span></a>`;
           }).join('');
@@ -469,20 +542,38 @@ __AGENT_LINKS_HTML__
             return `<a class="action-menu-item action-menu-item-numbered" href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span><span>${escapeHTML(target.label)}</span></a>`;
           }).join('');
           const sections = [
-            '<div class="action-menu-section"><a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">New host shell</a></div>',
-            pinnedItems ? `<div class="action-menu-section"><div class="action-menu-heading">clawlab</div>${pinnedItems}</div>` : '',
+            '<div class="action-menu-section"><a class="action-menu-item" href="tty/" target="_blank" rel="noreferrer">shell</a></div>',
+            pinnedItems ? `<div class="action-menu-section"><div class="action-menu-heading">aelab</div>${pinnedItems}</div>` : '',
             tmuxItems ? `<div class="action-menu-section"><div class="action-menu-heading">tmux</div>${tmuxItems}</div>` : '',
+            '__HOST_YOLO_MENU_SECTION_JS__',
           ].filter(Boolean);
           hostTerminalMenuPanel.innerHTML = sections.join('');
         }
+        const tmuxWindowItems = tmuxSessions.map((session) => {
+          const name = String(session.name || '');
+          if (!name) return '';
+          return `<a class="action-menu-item" href="/tty/tmux/${encodeURIComponent(name)}/" target="_blank" rel="noreferrer" data-tmux-window-session="${escapeHTML(name)}">tmux: ${escapeHTML(name)}</a>`;
+        }).join('');
+        document.querySelectorAll('[data-open-with-section]').forEach((section) => {
+          section.querySelectorAll('[data-tmux-window-generated="true"]').forEach((item) => item.remove());
+          if (!tmuxWindowItems) return;
+          const terminalPath = section.dataset.terminalPath || '';
+          const template = document.createElement('template');
+          template.innerHTML = tmuxWindowItems;
+          template.content.querySelectorAll('[data-tmux-window-session]').forEach((item) => {
+            item.dataset.tmuxWindowGenerated = 'true';
+            item.dataset.terminalPath = terminalPath;
+          });
+          section.append(template.content.cloneNode(true));
+        });
         terminalTargets.forEach((target) => {
           const number = numberForPath.get(target.path) || '';
-          if (target.kind === 'clawlab') {
+          if (target.kind === 'aelab') {
             const workspace = target.workspace ? ` <span class="detail-cwd">cwd: <code>${escapeHTML(target.workspace)}</code></span>` : '';
-            targetRows.push(`<li class="dashboard-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-running">clawlab</span></div><div class="row-details"><span class="detail-clients">clients: <code>${target.clients}</code></span>${workspace}</div></div></li>`);
+            targetRows.push(`<li class="index-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-running">aelab</span></div><div class="row-details"><span class="detail-clients">clients: <code>${target.clients}</code></span>${workspace}</div></div></li>`);
             return;
           }
-          targetRows.push(`<li class="dashboard-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-interactive">tmux</span></div><div class="row-details"><span class="detail-clients">attached: <code>${target.attached}</code></span><span class="detail-windows">windows: <code>${target.windows}</code></span></div></div></li>`);
+          targetRows.push(`<li class="index-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-interactive">tmux</span></div><div class="row-details"><span class="detail-clients">attached: <code>${target.attached}</code></span><span class="detail-windows">windows: <code>${target.windows}</code></span></div></div></li>`);
         });
         if (pinnedList) {
           pinnedList.innerHTML = targetRows.join('');
@@ -495,7 +586,7 @@ __AGENT_LINKS_HTML__
           hostTerminalsToggle.hidden = targetRows.length === 0;
           syncSessionsToggle();
         }
-        const pinnedPaths = new Set(terminalTargets.filter((target) => target.kind === 'clawlab').map((target) => target.path));
+        const pinnedPaths = new Set(terminalTargets.filter((target) => target.kind === 'aelab').map((target) => target.path));
         for (const path of pinnedPaths) {
           const anchors = Array.from(document.querySelectorAll('a[href]')).filter((anchor) => {
             const href = anchor.getAttribute('href');
@@ -536,10 +627,13 @@ __AGENT_LINKS_HTML__
         scrollActiveHostIntoView();
       };
 
-      fetch('/tty/targets', { cache: 'no-store' })
-        .then((response) => response.ok ? response.json() : { labSessions: [], tmuxSessions: [] })
-        .then((payload) => renderTerminalTargets(payload))
-        .catch(() => renderTerminalTargets({ labSessions: [], tmuxSessions: [] }));
+      const refreshSessions = () => {
+        fetch('/tty/sessions', { cache: 'no-store' })
+          .then((response) => response.ok ? response.json() : { labSessions: [], tmuxSessions: [] })
+          .then((payload) => renderTerminalTargets(payload))
+          .catch(() => renderTerminalTargets({ labSessions: [], tmuxSessions: [] }));
+      };
+      refreshSessions();
     })();
   </script>
 </body>

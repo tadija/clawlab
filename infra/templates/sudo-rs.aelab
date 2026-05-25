@@ -1,0 +1,46 @@
+# /etc/sudoers.d/aelab - installed by `./ae infra install`.
+# sudo-rs compatibility template.
+# Validate after editing: sudo visudo -c -f /etc/sudoers.d/aelab
+
+Cmnd_Alias AELAB_LAUNCHCTL = \
+    /bin/launchctl bootout system *, \
+    /bin/launchctl bootstrap system *, \
+    /bin/launchctl enable *, \
+    /bin/launchctl disable *, \
+    /bin/launchctl kickstart -k *
+
+Cmnd_Alias AELAB_SYSTEMCTL = \
+    /bin/systemctl enable --now *, \
+    /usr/bin/systemctl enable --now *, \
+    /bin/systemctl disable --now *, \
+    /usr/bin/systemctl disable --now *, \
+    /bin/systemctl daemon-reload, \
+    /usr/bin/systemctl daemon-reload
+
+Cmnd_Alias AELAB_INSTALL = \
+    /usr/bin/install *
+
+Cmnd_Alias AELAB_RM = \
+    /bin/rm -f *, \
+    /usr/bin/rm -f *
+
+Cmnd_Alias AELAB_REPAIR = \
+    /usr/sbin/chown *, \
+    /usr/sbin/chown -R *, \
+    /bin/chown *, \
+    /bin/chown -R *, \
+    /usr/sbin/chgrp *, \
+    /usr/bin/chgrp *, \
+    /bin/chgrp *, \
+    /usr/bin/chmod g+rwxs *, \
+    /usr/bin/chmod g+rw *, \
+    /usr/bin/chmod +a *, \
+    /bin/chmod g+rwxs *, \
+    /bin/chmod g+rw *, \
+    /bin/chmod +a *
+
+Cmnd_Alias AELAB_VISUDO = \
+    /usr/sbin/visudo -c -f /etc/sudoers.d/aelab, \
+    /sbin/visudo -c -f /etc/sudoers.d/aelab
+
+%__AELAB_SUDO_GROUP__ ALL=(root) NOPASSWD: AELAB_LAUNCHCTL, AELAB_SYSTEMCTL, AELAB_INSTALL, AELAB_RM, AELAB_REPAIR, AELAB_VISUDO

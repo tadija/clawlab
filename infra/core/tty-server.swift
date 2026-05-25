@@ -29,11 +29,29 @@ struct Config {
     let shellPath: String
 }
 
+let logFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+func log(_ message: String, level: String = "info") {
+    let ts = logFormatter.string(from: Date())
+#if os(Linux)
+    let stream = (level == "error" ? stderr! : stdout!)
+#else
+    let stream = (level == "error" ? stderr : stdout)
+#endif
+    fputs("[\(ts)] \(level) \(message)\n", stream)
+    fflush(stream)
+}
+
 enum TerminalLaunchMode {
     case shell
     case agentTui
+    case agentYoloTui
     case projectTool(name: String)
-    case tmuxAttach(sessionName: String)
+    case tmuxAttach(sessionName: String, windowId: String?)
 }
 
 enum TerminalTargetKind {
@@ -116,8 +134,15 @@ func shellQuote(_ value: String) -> String {
 }
 
 func usage() -> Never {
-    fputs("usage: dash-tty-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 1984] [--shell /bin/bash]\n", stderr)
+    fputs("usage: tty-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 1984] [--shell /bin/bash]\n", stderr)
     exit(1)
+}
+
+func serviceUserHomeDirectory() -> String {
+    if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+        return home
+    }
+    return NSHomeDirectory()
 }
 
 func parseArgs() -> Config {
@@ -257,6 +282,41 @@ func htmlEscape(_ value: String) -> String {
         .replacingOccurrences(of: "<", with: "&lt;")
         .replacingOccurrences(of: ">", with: "&gt;")
         .replacingOccurrences(of: "\"", with: "&quot;")
+}
+
+func trim(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func repoConfigEntries(repoRoot: String, section wantedSection: String) -> [(key: String, value: String)] {
+    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("config/custom/repo.ini").path
+    guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else {
+        return []
+    }
+
+    var entries: [(key: String, value: String)] = []
+    var currentSection = ""
+
+    for rawLine in raw.components(separatedBy: .newlines) {
+        let line = trim(rawLine)
+        if line.isEmpty || line.hasPrefix("#") {
+            continue
+        }
+        if line.hasPrefix("[") && line.hasSuffix("]") {
+            currentSection = trim(String(line.dropFirst().dropLast()))
+            continue
+        }
+        guard currentSection == wantedSection, let separator = line.firstIndex(of: "=") else {
+            continue
+        }
+        let key = trim(String(line[..<separator]))
+        let value = trim(String(line[line.index(after: separator)...]))
+        if !key.isEmpty && !value.isEmpty {
+            entries.append((key: key, value: value))
+        }
+    }
+
+    return entries
 }
 
 func readHTTPRequest(fd: Int32) -> Data? {
@@ -405,8 +465,8 @@ func hostProjects(repoRoot: String) -> [String: String] {
 
     for rawLine in contents.split(separator: "\n", omittingEmptySubsequences: false) {
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard line.hasPrefix("CLAWLAB_PROJECTS=") else { continue }
-        let rawValue = String(line.dropFirst("CLAWLAB_PROJECTS=".count))
+        guard line.hasPrefix("AELAB_PROJECTS=") else { continue }
+        let rawValue = String(line.dropFirst("AELAB_PROJECTS=".count))
         let value = parseEnvAssignmentValue(rawValue)
         var projects: [String: String] = [:]
         for item in value.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
@@ -466,18 +526,34 @@ func valueAllowedInPathSegment(_ byte: UInt8) -> Bool {
 func terminalContext(repoRoot: String, requestPath: String) -> TerminalContext {
     let segments = normalizedTerminalSegments(for: requestPath)
     guard !segments.isEmpty else {
-        return TerminalContext(agentId: nil, projectTitle: nil, targetKind: .host, workspace: repoRoot, launchMode: .shell)
+        return TerminalContext(agentId: nil, projectTitle: nil, targetKind: .host, workspace: serviceUserHomeDirectory(), launchMode: .shell)
     }
 
     if segments[0] == "tmux", segments.count >= 2 {
         let sessionName = urlDecode(segments[1])
-        return TerminalContext(agentId: nil, projectTitle: "tmux/\(sessionName)", targetKind: .host, workspace: repoRoot, launchMode: .tmuxAttach(sessionName: sessionName))
+        let windowId = segments.count >= 3 ? urlDecode(segments[2]) : nil
+        return TerminalContext(agentId: nil, projectTitle: "tmux/\(sessionName)", targetKind: .host, workspace: repoRoot, launchMode: .tmuxAttach(sessionName: sessionName, windowId: windowId))
     }
 
     if segments[0].range(of: #"^[0-9]{3}$"#, options: .regularExpression) != nil {
         let agentId = segments[0]
-        let mode: TerminalLaunchMode = segments.last == "tui" ? .agentTui : .shell
-        return TerminalContext(agentId: agentId, projectTitle: nil, targetKind: .agent, workspace: agentWorkspace(repoRoot: repoRoot, agentId: agentId), launchMode: mode)
+        let mode: TerminalLaunchMode
+        let workspace: String
+        let targetKind: TerminalTargetKind
+        if segments.last == "yolo" {
+            mode = .agentYoloTui
+            workspace = serviceUserHomeDirectory()
+            targetKind = .project
+        } else if segments.last == "tui" {
+            mode = .agentTui
+            workspace = agentWorkspace(repoRoot: repoRoot, agentId: agentId)
+            targetKind = .agent
+        } else {
+            mode = .shell
+            workspace = agentWorkspace(repoRoot: repoRoot, agentId: agentId)
+            targetKind = .agent
+        }
+        return TerminalContext(agentId: agentId, projectTitle: nil, targetKind: targetKind, workspace: workspace, launchMode: mode)
     }
 
     let title = urlDecode(segments[0])
@@ -488,13 +564,14 @@ func terminalContext(repoRoot: String, requestPath: String) -> TerminalContext {
         if segments.count >= 2, segments[1] == "lazygit" {
             return TerminalContext(agentId: nil, projectTitle: title, targetKind: .project, workspace: workspace, launchMode: .projectTool(name: "lazygit"))
         }
-        if segments.count >= 3, segments[1].range(of: #"^[0-9]{3}$"#, options: .regularExpression) != nil, segments.last == "tui" {
-            return TerminalContext(agentId: segments[1], projectTitle: title, targetKind: .project, workspace: workspace, launchMode: .agentTui)
+        if segments.count >= 3, segments[1].range(of: #"^[0-9]{3}$"#, options: .regularExpression) != nil, (segments.last == "tui" || segments.last == "yolo") {
+            let mode: TerminalLaunchMode = segments.last == "yolo" ? .agentYoloTui : .agentTui
+            return TerminalContext(agentId: segments[1], projectTitle: title, targetKind: .project, workspace: workspace, launchMode: mode)
         }
         return TerminalContext(agentId: nil, projectTitle: title, targetKind: .project, workspace: workspace, launchMode: .shell)
     }
 
-    return TerminalContext(agentId: nil, projectTitle: nil, targetKind: .host, workspace: repoRoot, launchMode: .shell)
+    return TerminalContext(agentId: nil, projectTitle: nil, targetKind: .host, workspace: serviceUserHomeDirectory(), launchMode: .shell)
 }
 
 func sendWebSocketFrame(fd: Int32, opcode: UInt8, payload: Data) {
@@ -910,16 +987,16 @@ func spawnShellShell(repoRoot: String, workspace: String, shellPath: String) -> 
     return spawnPTYProcess(workspace: workspace, executable: path, arguments: ["-l"])
 }
 
-func spawnAgentTuiShell(repoRoot: String, agentId: String, workspace: String? = nil) -> (masterFD: Int32, pid: pid_t)? {
-    let commandPath = URL(fileURLWithPath: repoRoot).appendingPathComponent("cmd").path
+func spawnAgentTuiShell(repoRoot: String, agentId: String, workspace: String? = nil, yolo: Bool = false) -> (masterFD: Int32, pid: pid_t)? {
+    let commandPath = URL(fileURLWithPath: repoRoot).appendingPathComponent("ae").path
     guard FileManager.default.isExecutableFile(atPath: commandPath) else {
         return nil
     }
     var environment: [String: String] = [:]
     if let workspace {
-        environment["CLAWLAB_AGENT_WORKSPACE"] = workspace
+        environment["AELAB_AGENT_WORKSPACE"] = workspace
     }
-    return spawnPTYProcess(workspace: repoRoot, executable: commandPath, arguments: [agentId, "tui"], environment: environment)
+    return spawnPTYProcess(workspace: repoRoot, executable: commandPath, arguments: [agentId, yolo ? "yolo" : "tui"], environment: environment)
 }
 
 func resolveProjectToolPath(_ name: String) -> String? {
@@ -941,9 +1018,16 @@ func spawnProjectToolShell(workspace: String, toolName: String) throws -> (maste
     return spawned
 }
 
-func spawnTmuxAttachShell(repoRoot: String, sessionName: String) -> (masterFD: Int32, pid: pid_t)? {
+func spawnTmuxAttachShell(repoRoot: String, sessionName: String, windowId: String?) -> (masterFD: Int32, pid: pid_t)? {
     guard let tmuxPath = resolveTmuxPath() else {
         return nil
+    }
+    if let windowId, !windowId.isEmpty {
+        let selectProcess = Process()
+        selectProcess.executableURL = URL(fileURLWithPath: tmuxPath)
+        selectProcess.arguments = tmuxSocketArguments() + ["select-window", "-t", windowId]
+        try? selectProcess.run()
+        selectProcess.waitUntilExit()
     }
     return spawnPTYProcess(workspace: repoRoot, executable: "/usr/bin/env", arguments: ["-u", "TMUX", tmuxPath] + tmuxSocketArguments() + ["attach-session", "-t", sessionName])
 }
@@ -954,6 +1038,8 @@ func launchModeName(_ mode: TerminalLaunchMode) -> String {
         return "shell"
     case .agentTui:
         return "agentTui"
+    case .agentYoloTui:
+        return "agentYoloTui"
     case .projectTool(let name):
         return name
     case .tmuxAttach:
@@ -1011,6 +1097,72 @@ func discoverTmuxSessions() -> TmuxDiscovery {
 
 func listTmuxSessions() -> [TmuxSession] {
     discoverTmuxSessions().sessions
+}
+
+func jsonResponseObject(_ object: [String: Any], status: String = "200 OK", headOnly: Bool = false) -> Data {
+    let body = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])) ?? Data("{}".utf8)
+    return response(status: status, contentType: "application/json; charset=utf-8", body: body, headOnly: headOnly)
+}
+
+func createTmuxWindow(repoRoot: String, body: Data) -> (status: String, object: [String: Any]) {
+    guard let tmuxPath = resolveTmuxPath() else {
+        return ("503 Service Unavailable", ["ok": false, "error": "tmux not found"])
+    }
+    guard
+        let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+        let sessionName = payload["session"] as? String,
+        let terminalPath = payload["terminalPath"] as? String,
+        !sessionName.isEmpty
+    else {
+        return ("400 Bad Request", ["ok": false, "error": "bad tmux window payload"])
+    }
+
+    let availableSessions = Set(listTmuxSessions().map(\.name))
+    guard availableSessions.contains(sessionName) else {
+        return ("404 Not Found", ["ok": false, "error": "tmux session not found"])
+    }
+
+    let context = terminalContext(repoRoot: repoRoot, requestPath: terminalPath)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: context.workspace, isDirectory: &isDirectory), isDirectory.boolValue else {
+        return ("400 Bad Request", ["ok": false, "error": "workspace not found", "workspace": context.workspace])
+    }
+    let process = Process()
+    let outputPipe = Pipe()
+    let errorPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: tmuxPath)
+    process.arguments = tmuxSocketArguments() + ["new-window", "-P", "-F", "#{window_id}", "-t", sessionName, "-c", context.workspace]
+    process.standardOutput = outputPipe
+    process.standardError = errorPipe
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        return ("500 Internal Server Error", ["ok": false, "error": String(describing: error)])
+    }
+
+    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+    let windowId = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let errorOutput = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard process.terminationStatus == 0 else {
+        return ("500 Internal Server Error", ["ok": false, "error": errorOutput.isEmpty ? "tmux new-window failed" : errorOutput])
+    }
+    if !windowId.isEmpty {
+        let selectProcess = Process()
+        selectProcess.executableURL = URL(fileURLWithPath: tmuxPath)
+        selectProcess.arguments = tmuxSocketArguments() + ["select-window", "-t", windowId]
+        try? selectProcess.run()
+        selectProcess.waitUntilExit()
+    }
+
+    return ("200 OK", [
+        "ok": true,
+        "path": windowId.isEmpty ? "/tty/tmux/\(urlEncodePathSegment(sessionName))/" : "/tty/tmux/\(urlEncodePathSegment(sessionName))/\(urlEncodePathSegment(windowId))/",
+        "windowId": windowId,
+        "workspace": context.workspace
+    ])
 }
 
 func terminateSession(pid: pid_t) {
@@ -1297,17 +1449,23 @@ final class SessionRegistry {
         switch context.launchMode {
         case .shell:
             spawned = spawnShellShell(repoRoot: config.repoRoot, workspace: context.workspace, shellPath: config.shellPath)
-        case .agentTui:
+        case .agentTui, .agentYoloTui:
             guard let agentId = context.agentId else {
                 throw TerminalSpawnFailure.message("agent id missing\n")
             }
             let workspace = context.targetKind == .project ? context.workspace : nil
-            spawned = spawnAgentTuiShell(repoRoot: config.repoRoot, agentId: agentId, workspace: workspace)
+            let yolo: Bool
+            if case .agentYoloTui = context.launchMode {
+                yolo = true
+            } else {
+                yolo = false
+            }
+            spawned = spawnAgentTuiShell(repoRoot: config.repoRoot, agentId: agentId, workspace: workspace, yolo: yolo)
         case .projectTool(let name):
             let projectTool = try spawnProjectToolShell(workspace: context.workspace, toolName: name)
             return TerminalSpawnResult(masterFD: projectTool.masterFD, pid: projectTool.pid)
-        case .tmuxAttach(let sessionName):
-            spawned = spawnTmuxAttachShell(repoRoot: config.repoRoot, sessionName: sessionName)
+        case .tmuxAttach(let sessionName, let windowId):
+            spawned = spawnTmuxAttachShell(repoRoot: config.repoRoot, sessionName: sessionName, windowId: windowId)
         }
         guard let spawned else {
             throw TerminalSpawnFailure.message("shell failed\n")
@@ -1325,29 +1483,54 @@ func websocketHandshake(fd: Int32, request: HTTPRequest) -> Bool {
 }
 
 func loadTerminalTemplate(repoRoot: String) -> String? {
-    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/templates/dash-tty.html").path
+    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/core/tty.html").path
     return try? String(contentsOfFile: path, encoding: .utf8)
+}
+
+struct TTYButton {
+    let key: String
+    let label: String
+}
+
+func ttyButtons(repoRoot: String) -> [TTYButton] {
+    repoConfigEntries(repoRoot: repoRoot, section: "tty-buttons").map {
+        TTYButton(key: $0.key, label: $0.value)
+    }
+}
+
+func renderTTYButtons(repoRoot: String) -> String {
+    let buttons = ttyButtons(repoRoot: repoRoot)
+    guard !buttons.isEmpty else {
+        return #"        <span style="color:var(--muted);font-size:13px;padding:0 4px;white-space:nowrap;line-height:36px">configure buttons in repo.ini</span>"#
+    }
+    return buttons.map { button in
+        let label = htmlEscape(button.label)
+        let key = htmlEscape(button.key)
+        let pressed = button.key == "alt" ? #" aria-pressed="false""# : ""
+        return #"        <button class="mobile-key" data-mobile-key="\#(key)" type="button" tabindex="-1"\#(pressed) aria-label="\#(label)" title="\#(label)">\#(label)</button>"#
+    }.joined(separator: "\n")
 }
 
 func terminalPageHTML(repoRoot: String, agentId: String?, projectTitle: String?, workspace: String) -> Data {
     let title: String
     if let agentId {
-        title = "clawlab tty / \(agentId)"
+        title = "aelab tty / \(agentId)"
     } else if let projectTitle {
-        title = "clawlab tty / \(projectTitle)"
+        title = "aelab tty / \(projectTitle)"
     } else {
-        title = "clawlab tty"
+        title = "aelab tty"
     }
     let hostLabel = ProcessInfo.processInfo.hostName.replacingOccurrences(of: #"\.local$"#, with: "", options: .regularExpression)
 
     guard var page = loadTerminalTemplate(repoRoot: repoRoot) else {
-        return Data("dash tty template not found\n".utf8)
+        return Data("tty template not found\n".utf8)
     }
 
     page = page
         .replacingOccurrences(of: "__PAGE_TITLE__", with: htmlEscape(title))
         .replacingOccurrences(of: "__HOST_LABEL__", with: htmlEscape(hostLabel))
         .replacingOccurrences(of: "__WORKSPACE_LABEL__", with: htmlEscape(workspace))
+        .replacingOccurrences(of: "__TTY_BUTTONS__", with: renderTTYButtons(repoRoot: repoRoot))
     return Data(page.utf8)
 }
 
@@ -1358,9 +1541,11 @@ func handleWebSocketSession(fd: Int32, requestPath: String, config: Config, regi
     do {
         session = try registry.session(for: key, context: context, config: config)
     } catch TerminalSpawnFailure.message(let message) {
+        log("session spawn failed for \(requestPath): \(message.trimmingCharacters(in: .whitespacesAndNewlines))", level: "error")
         sendWebSocketFrame(fd: fd, opcode: 0x1, payload: outputMessage(Data(message.utf8)))
         return
     } catch {
+        log("session spawn failed for \(requestPath): \(error)", level: "error")
         sendWebSocketFrame(fd: fd, opcode: 0x1, payload: outputMessage(Data("shell failed\n".utf8)))
         return
     }
@@ -1369,9 +1554,11 @@ func handleWebSocketSession(fd: Int32, requestPath: String, config: Config, regi
         session.resize(cols: size.cols, rows: size.rows)
     }
     session.attach(fd: fd)
+    log("ws connect: \(requestPath)")
     defer {
         session.detach(fd: fd)
         sendWebSocketFrame(fd: fd, opcode: 0x8, payload: Data())
+        log("ws close:   \(requestPath)")
     }
 
     var socketBuffer = Data()
@@ -1430,11 +1617,6 @@ func handleWebSocketSession(fd: Int32, requestPath: String, config: Config, regi
 }
 
 func sessionsJSON(registry: SessionRegistry) -> Data {
-    let object: [String: Any] = ["labSessions": registry.pinnedDictionaries()]
-    return (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted])) ?? Data(#"{"labSessions":[]}"#.utf8)
-}
-
-func targetsJSON(registry: SessionRegistry) -> Data {
     let tmuxDiscovery = discoverTmuxSessions()
     let object: [String: Any] = [
         "labSessions": registry.pinnedDictionaries(),
@@ -1458,6 +1640,9 @@ func readLook(repoRoot: String) -> [String: Any] {
         return [:]
     }
     var result: [String: Any] = [:]
+    if let theme = object["theme"] as? String, isTheme(theme) {
+        result["theme"] = theme
+    }
     for key in ["tintByHost", "terminalBgByHost", "terminalBgByPath"] {
         if let rawValues = object[key] as? [String: Any] {
             var values: [String: String] = [:]
@@ -1487,6 +1672,10 @@ func isHexColor(_ value: String) -> Bool {
     value.range(of: #"^#[0-9a-fA-F]{6}$"#, options: .regularExpression) != nil
 }
 
+func isTheme(_ value: String) -> Bool {
+    value == "dark" || value == "light"
+}
+
 func isLookScope(_ value: String) -> Bool {
     !value.isEmpty && value.count <= 4096 && value.rangeOfCharacter(from: .controlCharacters) == nil
 }
@@ -1502,6 +1691,9 @@ func updateLook(repoRoot: String, body: Data) -> Bool {
         return false
     }
     var values = readLook(repoRoot: repoRoot)
+    if let theme = object["theme"] as? String, isTheme(theme) {
+        values["theme"] = theme
+    }
     for key in ["tintByHost", "terminalBgByHost", "terminalBgByPath"] {
         if let updates = object[key] as? [String: Any] {
             var stored = values[key] as? [String: String] ?? [:]
@@ -1553,8 +1745,13 @@ func handleConnection(fd: Int32, config: Config, registry: SessionRegistry) {
         return
     }
 
-    if cleanPath == "/targets" || cleanPath == "/tty/targets" {
-        sendAll(fd: fd, data: response(status: "200 OK", contentType: "application/json; charset=utf-8", body: targetsJSON(registry: registry), headOnly: headOnly))
+    if cleanPath == "/tmux/window" || cleanPath == "/tty/tmux/window" {
+        guard request.method == "POST" else {
+            sendAll(fd: fd, data: response(status: "405 Method Not Allowed", contentType: "text/plain; charset=utf-8", body: Data("method not allowed\n".utf8), headOnly: headOnly))
+            return
+        }
+        let result = createTmuxWindow(repoRoot: config.repoRoot, body: request.body)
+        sendAll(fd: fd, data: jsonResponseObject(result.object, status: result.status, headOnly: headOnly))
         return
     }
 
@@ -1590,12 +1787,14 @@ let config = parseArgs()
 let registry = SessionRegistry()
 signal(SIGPIPE, SIG_IGN)
 let serverFD = makeServerSocket(host: config.host, port: config.port)
+log("tty server listening on \(config.host):\(config.port) (repo: \(config.repoRoot))")
 
 while true {
     let clientFD = accept(serverFD, nil, nil)
     if clientFD < 0 {
         if errno == EINTR { continue }
         perror("accept")
+        log("accept failed: errno=\(errno)", level: "error")
         continue
     }
     Thread.detachNewThread {

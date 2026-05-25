@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")" && pwd)/core.sh"
 
-CLAWLAB_LOG_PREFIX="restart"
+AELAB_LOG_PREFIX="restart"
 load_host_env
 
 main() {

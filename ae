@@ -5,28 +5,25 @@ import Foundation
 import Glibc
 #else
 import Darwin
-
-@_silgen_name("_NSGetEnviron")
-func _NSGetEnviron() -> UnsafeMutablePointer<UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?>
 #endif
 
 func usage() {
     print("""
 Usage:
-  cmd list
-  cmd make <agent-id-agent-kind|existing-agent-id> [args...]
-  cmd rename <old-agent-id> <new-agent-id> [-y|--yes]
-  cmd remove <agent-id> [agent-id...] [-y|--yes]
-  cmd <agent-id> [setup|start|stop|tui|native-command...]
-  cmd <service-id> <native-command...>
-  cmd infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render|update> [args...]
+  ae list
+  ae make <agent-id-agent-kind|existing-agent-id> [args...]
+  ae rename <old-agent-id> <new-agent-id> [-y|--yes]
+  ae remove <agent-id> [agent-id...] [-y|--yes]
+  ae <agent-id> [setup|start|stop|tui|yolo|native-command...]
+  ae <service-id> <native-command...>
+  ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render|update> [args...]
 
 Global commands:
   list    -> list existing agents
   make    -> create agent working dir if needed and run native setup once
   rename  -> rename an existing agent id and related host config
   remove  -> remove agent working dir(s) (-y to confirm)
-  infra   -> run clawlab infra scripts
+  infra   -> run aelab infra scripts
 
 Agent commands:
   bootstrap -> install runtime/dependencies for this agent kind
@@ -35,37 +32,46 @@ Agent commands:
   start   -> start gateway / daemon (depending on agent)
   stop    -> stop gateway / daemon (depending on agent)
   tui     -> run native terminal UI when the agent kind supports it
+  yolo    -> run native terminal UI with yolo bypass args when supported
 
 Examples:
-  ./cmd list
+  ./ae list
 
-  ./cmd make 001-openclaw && ./cmd 001 bootstrap && ./cmd 001 onboard --skip-daemon && ./cmd 001 start
+  ./ae make 001-openclaw && ./ae 001 bootstrap && ./ae 001 onboard --skip-daemon && ./ae 001 start
 
-  ./cmd make 004-picoclaw
-  ./cmd 004 bootstrap
-  ./cmd 004 auth login --provider anthropic
-  ./cmd 004 start
+  ./ae make 004-picoclaw
+  ./ae 004 bootstrap
+  ./ae 004 auth login --provider anthropic
+  ./ae 004 start
 
-  ./cmd make 007-zeroclaw
-  ./cmd 007 bootstrap
-  ./cmd 007 auth paste-redirect --provider openai-codex --profile default
-  ./cmd 007 start
+  ./ae make 007-zeroclaw
+  ./ae 007 bootstrap
+  ./ae 007 auth paste-redirect --provider openai-codex --profile default
+  ./ae 007 start
 
-  ./cmd make 011-hermes
-  ./cmd 011 bootstrap
-  ./cmd 011 start
+  ./ae make 011-hermes
+  ./ae 011 bootstrap
+  ./ae 011 start
 
-  ./cmd infra render <brew|caddy>
-  ./cmd infra bootstrap <agents|services>
-  ./cmd infra install <agents|services>
-  ./cmd infra start <agents|services>
-  ./cmd infra start 003 005 007
-  ./cmd infra status 000 && ./cmd infra log 000
+  ./ae infra render <brew|caddy>
+  ./ae infra bootstrap <agents|services>
+  ./ae infra install <agents|services>
+  ./ae infra start <agents|services>
+  ./ae infra start 003 005 007
+  ./ae infra status 000 && ./ae infra log 000
 """)
 }
 
+typealias EnvironmentPointer = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 
-func currentEnvironmentPointer() -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? {
+#if !os(Linux)
+typealias EnvironmentPointerStorage = UnsafeMutablePointer<EnvironmentPointer>
+
+@_silgen_name("_NSGetEnviron")
+func _NSGetEnviron() -> EnvironmentPointerStorage
+#endif
+
+func currentEnvironmentPointer() -> EnvironmentPointer {
 #if os(Linux)
     return environ
 #else
@@ -102,7 +108,11 @@ enum AgentCommand: String {
     case start
     case stop
     case tui
+    case yolo
 }
+
+let projectName = "aelab"
+let launchdLabelPrefix = "net.tadija.\(projectName)"
 
 struct AgentKindSpec {
     let kind: String
@@ -116,6 +126,7 @@ struct AgentKindSpec {
     let initArgs: [String]
     let hasInitCommand: Bool
     let tuiArgs: [String]
+    let tuiYoloArgs: [String]
     let startArgs: [String]
     let hasStartCommand: Bool
     let startPortFlag: String?
@@ -125,7 +136,8 @@ struct AgentKindSpec {
 
 struct ServiceSpec {
     let id: String
-    let bin: String
+    let bin: String?
+    let groupMembers: [String]
 }
 
 let rootURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -273,22 +285,23 @@ func loadAgentKindSpecs() -> [AgentKindSpec] {
         }
 
         return AgentKindSpec(
-            kind: require("CLAWLAB_AGENT_KIND"),
-            homeEnvName: values["CLAWLAB_AGENT_HOME_ENV"].flatMap { $0.isEmpty ? nil : $0 },
-            envAssignments: parseEnvAssignments(values["CLAWLAB_AGENT_ENV"]),
-            brewTaps: parseListValue(values["CLAWLAB_AGENT_BREW_TAPS"]),
-            brewPackages: parseListValue(values["CLAWLAB_AGENT_BREW_PACKAGES"]),
-            brewCasks: parseListValue(values["CLAWLAB_AGENT_BREW_CASKS"]),
-            installKind: values["CLAWLAB_AGENT_INSTALL_KIND"].flatMap { $0.isEmpty ? nil : $0 },
-            installScript: values["CLAWLAB_AGENT_INSTALL_SCRIPT"].flatMap { $0.isEmpty ? nil : $0 },
-            initArgs: splitTemplateArgs(values["CLAWLAB_AGENT_SETUP_ARGS"]),
-            hasInitCommand: values["CLAWLAB_AGENT_SETUP_ARGS"] != nil,
-            tuiArgs: splitTemplateArgs(values["CLAWLAB_AGENT_TUI_ARGS"]),
-            startArgs: splitTemplateArgs(values["CLAWLAB_AGENT_START_ARGS"]),
-            hasStartCommand: values["CLAWLAB_AGENT_START_ARGS"] != nil,
-            startPortFlag: values["CLAWLAB_AGENT_START_PORT_FLAG"].flatMap { $0.isEmpty ? nil : $0 },
-            stopArgs: splitTemplateArgs(values["CLAWLAB_AGENT_STOP_ARGS"]),
-            forwardPrefix: splitTemplateArgs(require("CLAWLAB_AGENT_FORWARD_PREFIX"))
+            kind: require("AELAB_AGENT_KIND"),
+            homeEnvName: values["AELAB_AGENT_HOME_ENV"].flatMap { $0.isEmpty ? nil : $0 },
+            envAssignments: parseEnvAssignments(values["AELAB_AGENT_ENV"]),
+            brewTaps: parseListValue(values["AELAB_AGENT_BREW_TAPS"]),
+            brewPackages: parseListValue(values["AELAB_AGENT_BREW_PACKAGES"]),
+            brewCasks: parseListValue(values["AELAB_AGENT_BREW_CASKS"]),
+            installKind: values["AELAB_AGENT_INSTALL_KIND"].flatMap { $0.isEmpty ? nil : $0 },
+            installScript: values["AELAB_AGENT_INSTALL_SCRIPT"].flatMap { $0.isEmpty ? nil : $0 },
+            initArgs: splitTemplateArgs(values["AELAB_AGENT_SETUP_ARGS"]),
+            hasInitCommand: values["AELAB_AGENT_SETUP_ARGS"] != nil,
+            tuiArgs: splitTemplateArgs(values["AELAB_AGENT_TUI_ARGS"]),
+            tuiYoloArgs: splitTemplateArgs(values["AELAB_AGENT_TUI_YOLO_ARGS"]),
+            startArgs: splitTemplateArgs(values["AELAB_AGENT_START_ARGS"]),
+            hasStartCommand: values["AELAB_AGENT_START_ARGS"] != nil,
+            startPortFlag: values["AELAB_AGENT_START_PORT_FLAG"].flatMap { $0.isEmpty ? nil : $0 },
+            stopArgs: splitTemplateArgs(values["AELAB_AGENT_STOP_ARGS"]),
+            forwardPrefix: splitTemplateArgs(require("AELAB_AGENT_FORWARD_PREFIX"))
         )
     }
 }
@@ -314,14 +327,15 @@ func loadServiceSpecs() -> [ServiceSpec] {
             return value
         }
 
-        let id = require("CLAWLAB_SERVICE_ID")
+        let id = require("AELAB_SERVICE_ID")
         guard id == serviceID else {
-            fatalConfig("service config \(fileName) does not match CLAWLAB_SERVICE_ID=\(id)")
+            fatalConfig("service config \(fileName) does not match AELAB_SERVICE_ID=\(id)")
         }
 
         return ServiceSpec(
             id: id,
-            bin: require("CLAWLAB_SERVICE_BIN")
+            bin: values["AELAB_SERVICE_BIN"].flatMap { $0.isEmpty ? nil : $0 },
+            groupMembers: parseListValue(values["AELAB_SERVICE_GROUP_MEMBERS"])
         )
     }
 }
@@ -359,25 +373,25 @@ func parseArgs(_ args: [String]) -> ParsedCommand {
     switch args[1] {
     case GlobalCommand.list.rawValue:
         if args.count != 2 {
-            fputs("usage: cmd list\n", stderr)
+            fputs("usage: ae list\n", stderr)
             exit(1)
         }
         return .globalList
     case GlobalCommand.make.rawValue:
         if args.count < 3 {
-            fputs("usage: cmd make <agent-id-agent-kind|existing-agent-id> [args...]\n", stderr)
+            fputs("usage: ae make <agent-id-agent-kind|existing-agent-id> [args...]\n", stderr)
             exit(1)
         }
         return .globalMake(agentArg: args[2], extra: Array(args.dropFirst(3)))
     case GlobalCommand.rename.rawValue:
         if args.count < 4 {
-            fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+            fputs("usage: ae rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
             exit(1)
         }
         return .globalRename(args: Array(args.dropFirst(2)))
     case GlobalCommand.remove.rawValue:
         if args.count < 3 {
-            fputs("usage: cmd remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
+            fputs("usage: ae remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
             exit(1)
         }
         return .globalRemove(args: Array(args.dropFirst(2)))
@@ -386,15 +400,15 @@ func parseArgs(_ args: [String]) -> ParsedCommand {
         exit(1)
     case GlobalCommand.infra.rawValue:
         if args.count < 3 {
-            fputs("usage: cmd infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render> [args...]\n", stderr)
+            fputs("usage: ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render> [args...]\n", stderr)
             exit(1)
         }
         return .globalInfra(subcommand: args[2], extra: Array(args.dropFirst(3)))
     default:
-        guard args.count >= 2 else { fatalConfig("usage: cmd <agent-id> [command...]") }
+        guard args.count >= 2 else { fatalConfig("usage: ae <agent-id> [command...]") }
         guard args.count >= 3 else { return .agent(agentArg: args[1], command: nil, extra: []) }
         if args[2] == GlobalCommand.make.rawValue || args[2] == GlobalCommand.rename.rawValue || args[2] == GlobalCommand.remove.rawValue || args[2] == GlobalCommand.list.rawValue {
-            fputs("usage: cmd <agent-id> [command...]\n", stderr)
+            fputs("usage: ae <agent-id> [command...]\n", stderr)
             exit(1)
         }
         return .agent(agentArg: args[1], command: args[2], extra: Array(args.dropFirst(3)))
@@ -468,8 +482,8 @@ func resolveExecutable(_ command: String) -> String {
     }
 
     fputs("executable not found in PATH: \(command)\n", stderr)
-    fputs("run ./cmd <agent-id> bootstrap to install manually\n", stderr)
-    fputs("or set up config/custom/host/.env file and run ./cmd infra bootstrap\n", stderr)
+    fputs("run ./ae <agent-id> bootstrap to install manually\n", stderr)
+    fputs("or set up config/custom/host/.env file and run ./ae infra bootstrap\n", stderr)
     exit(1)
 }
 
@@ -710,13 +724,13 @@ func runBootstrapSteps(kind: AgentKindSpec) {
         }
     case "script":
         guard let installScript = kind.installScript, !installScript.isEmpty else {
-            fputs("agent kind \(kind.kind) is missing CLAWLAB_AGENT_INSTALL_SCRIPT\n", stderr)
+            fputs("agent kind \(kind.kind) is missing AELAB_AGENT_INSTALL_SCRIPT\n", stderr)
             exit(1)
         }
         let scriptPath = rootURL.appendingPathComponent(installScript).path
         runCommandAndWait(["/bin/bash", scriptPath])
     default:
-        fputs("unsupported CLAWLAB_AGENT_INSTALL_KIND for \(kind.kind): \(kind.installKind ?? "")\n", stderr)
+        fputs("unsupported AELAB_AGENT_INSTALL_KIND for \(kind.kind): \(kind.installKind ?? "")\n", stderr)
         exit(1)
     }
 }
@@ -790,14 +804,14 @@ func applyPerAgentEnvironment(agent: String) {
 func applyEnvFile(at envURL: URL, agentURL: URL) {
     for (key, rawValue) in parseEnvFile(at: envURL) {
         let value = rawValue
-            .replacingOccurrences(of: "__CLAWLAB_ROOT__", with: rootURL.path)
+            .replacingOccurrences(of: "__AELAB_ROOT__", with: rootURL.path)
             .replacingOccurrences(of: "__AGENT_DIR__", with: agentURL.path)
         setenv(key, value, 1)
     }
 }
 
 func switchToAgentDirectory(_ agentURL: URL) {
-    let workspace = ProcessInfo.processInfo.environment["CLAWLAB_AGENT_WORKSPACE"] ?? agentURL.path
+    let workspace = ProcessInfo.processInfo.environment["AELAB_AGENT_WORKSPACE"] ?? agentURL.path
     guard FileManager.default.changeCurrentDirectoryPath(workspace) else {
         fputs("failed to switch to workspace: \(workspace)\n", stderr)
         exit(1)
@@ -846,10 +860,10 @@ func promptYesNo(_ question: String) -> Bool {
 func confirmBootstrap(agent: String, command: String) -> Bool {
     logError("make", "executable not found in PATH: \(command)")
     guard isatty(fileno(stdin)) != 0 else {
-        logError("make", "run ./cmd \(agentId(from: agent)) bootstrap to install it")
+        logError("make", "run ./ae \(agentId(from: agent)) bootstrap to install it")
         exit(1)
     }
-    return promptYesNo("Run ./cmd \(agentId(from: agent)) bootstrap now?")
+    return promptYesNo("Run ./ae \(agentId(from: agent)) bootstrap now?")
 }
 
 func ensureInitExecutable(agent: String, kind: AgentKindSpec, args: [String]) {
@@ -881,10 +895,10 @@ func confirmBootstrapWithoutMake(agent: String, kind: AgentKindSpec) -> Bool {
     let agentID = agentId(from: agent)
     logError("make", "no setup command for agent kind: \(kind.kind)")
     guard isatty(fileno(stdin)) != 0 else {
-        logError("make", "run ./cmd \(agentID) bootstrap to install manually")
+        logError("make", "run ./ae \(agentID) bootstrap to install manually")
         exit(0)
     }
-    return promptYesNo("Run ./cmd \(agentID) bootstrap now?")
+    return promptYesNo("Run ./ae \(agentID) bootstrap now?")
 }
 
 func runInitCommand(agent: String, kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
@@ -904,7 +918,7 @@ func runInitCommand(agent: String, kind: AgentKindSpec, agentURL: URL, extra: [S
             exit(0)
         }
         log("make", "no setup command for agent kind: \(kind.kind)")
-        log("make", "run ./cmd \(agentId(from: agent)) bootstrap to install manually")
+        log("make", "run ./ae \(agentId(from: agent)) bootstrap to install manually")
         exit(0)
     }
     let args = expandTemplateArgs(kind.initArgs, agentURL: agentURL) + extra
@@ -941,6 +955,18 @@ func handleTui(kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
     applyAgentEnvironment(kind, agentURL: agentURL)
     switchToAgentDirectory(agentURL)
     let args = expandTemplateArgs(kind.tuiArgs, agentURL: agentURL) + extra
+    execInteractive(args)
+}
+
+func handleYolo(kind: AgentKindSpec, agentURL: URL, extra: [String]) -> Never {
+    guard !kind.tuiYoloArgs.isEmpty else {
+        fputs("yolo is not defined for agent kind: \(kind.kind)\n", stderr)
+        exit(1)
+    }
+    applyPerAgentEnvironment(agent: agentURL.lastPathComponent)
+    applyAgentEnvironment(kind, agentURL: agentURL)
+    switchToAgentDirectory(agentURL)
+    let args = expandTemplateArgs(kind.tuiYoloArgs, agentURL: agentURL) + extra
     execInteractive(args)
 }
 
@@ -999,7 +1025,7 @@ func existingCleanupTargets(for agents: [String], removesLastAgent: Bool) -> [St
 #else
     return agents.compactMap { agent -> String? in
         let id = agentId(from: agent)
-        let plistPath = "/Library/LaunchDaemons/net.tadija.clawlab.\(id).plist"
+        let plistPath = "/Library/LaunchDaemons/\(launchdLabelPrefix).\(id).plist"
         return FileManager.default.fileExists(atPath: plistPath) ? id : nil
     }
 #endif
@@ -1010,7 +1036,7 @@ func offerServiceManagerCleanup(targets: [String]) -> Never {
         exit(0)
     }
 
-    let command = "./cmd infra uninstall \(targets.joined(separator: " "))"
+    let command = "./ae infra uninstall \(targets.joined(separator: " "))"
     guard isatty(fileno(stdin)) != 0 else {
         log("remove", "service-manager artifacts may still exist; run: \(command)")
         exit(0)
@@ -1027,14 +1053,14 @@ func handleRemove(agentArgs: [String]) -> Never {
     let confirmArgs: Set<String> = ["-y", "--yes"]
     let unknownOptions = agentArgs.filter { $0.hasPrefix("-") && !confirmArgs.contains($0) }
     if !unknownOptions.isEmpty {
-        fputs("usage: cmd remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
+        fputs("usage: ae remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
         exit(1)
     }
 
     let autoConfirm = agentArgs.contains(where: { confirmArgs.contains($0) })
     let requestedAgents = agentArgs.filter { !confirmArgs.contains($0) }
     if requestedAgents.isEmpty {
-        fputs("usage: cmd remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
+        fputs("usage: ae remove <agent-id> [agent-id...] [-y|--yes]\n", stderr)
         exit(1)
     }
 
@@ -1118,7 +1144,7 @@ func renameKeyInSection(fileURL: URL, section targetSection: String, oldKey: Str
 func moveIfPresent(from source: URL, to destination: URL) throws -> Bool {
     guard FileManager.default.fileExists(atPath: source.path) else { return false }
     if FileManager.default.fileExists(atPath: destination.path) {
-        throw NSError(domain: "cmd", code: 1, userInfo: [NSLocalizedDescriptionKey: "destination already exists: \(destination.path)"])
+        throw NSError(domain: "ae", code: 1, userInfo: [NSLocalizedDescriptionKey: "destination already exists: \(destination.path)"])
     }
     try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.moveItem(at: source, to: destination)
@@ -1161,14 +1187,14 @@ func handleRename(args: [String]) -> Never {
     let confirmArgs: Set<String> = ["-y", "--yes"]
     let unknownOptions = args.filter { $0.hasPrefix("-") && !confirmArgs.contains($0) }
     if !unknownOptions.isEmpty {
-        fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+        fputs("usage: ae rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
         exit(1)
     }
 
     let positional = args.filter { !confirmArgs.contains($0) }
     let autoConfirm = args.contains(where: { confirmArgs.contains($0) })
     guard positional.count == 2 else {
-        fputs("usage: cmd rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
+        fputs("usage: ae rename <old-agent-id> <new-agent-id> [-y|--yes]\n", stderr)
         exit(1)
     }
 
@@ -1249,7 +1275,7 @@ func handleRename(args: [String]) -> Never {
         }
     }
 
-    let command = "./cmd infra uninstall \(oldID) && ./cmd infra install \(newID)"
+    let command = "./ae infra uninstall \(oldID) && ./ae infra install \(newID)"
     log("rename", "service-manager artifacts may need refresh; run: \(command)")
     exit(0)
 }
@@ -1266,19 +1292,24 @@ func forwardCommand(kind: AgentKindSpec, agentURL: URL, command: String?, extra:
 }
 
 func forwardServiceCommand(service: ServiceSpec, command: String?, extra: [String]) -> Never {
-    guard let command else {
-        fputs("usage: cmd <service-id> <native-command...>\n", stderr)
+    guard let bin = service.bin else {
+        fputs("service \(service.id) is a group; use ./ae infra <command> \(service.id)\n", stderr)
         exit(1)
     }
 
-    execInteractive([service.bin, command] + extra)
+    guard let command else {
+        fputs("usage: ae <service-id> <native-command...>\n", stderr)
+        exit(1)
+    }
+
+    execInteractive([bin, command] + extra)
 }
 
 func requireAgentDir(agent: String, agentURL: URL) {
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: agentURL.path, isDirectory: &isDir), isDir.boolValue else {
         fputs("unknown agent: \(agent)\n", stderr)
-        fputs("create it with: cmd make \(agent)\n", stderr)
+        fputs("create it with: ae make \(agent)\n", stderr)
         exit(1)
     }
 }
@@ -1330,6 +1361,8 @@ case .agent(let agentArg, let command, let extra):
             handleStop(kind: kind, agentURL: agentURL, extra: extra)
         case .tui:
             handleTui(kind: kind, agentURL: agentURL, extra: extra)
+        case .yolo:
+            handleYolo(kind: kind, agentURL: agentURL, extra: extra)
         }
     } else {
         forwardCommand(kind: kind, agentURL: agentURL, command: command, extra: extra)

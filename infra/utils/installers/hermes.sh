@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "$0")/.." && pwd)/commands/core.sh"
+source "$(cd "$(dirname "$0")/../.." && pwd)/commands/core.sh"
 
 load_host_env
 

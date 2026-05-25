@@ -5,17 +5,17 @@
   <key>Label</key>
   <string>__LABEL__</string>
   <key>UserName</key>
-  <string>__CLAWLAB_USER__</string>
+  <string>__AELAB_USER__</string>
   <key>GroupName</key>
-  <string>__CLAWLAB_GROUP__</string>
+  <string>__AELAB_GROUP__</string>
   <key>Umask</key>
   <integer>2</integer>
   <key>WorkingDirectory</key>
-  <string>__CLAWLAB_ROOT__</string>
+  <string>__AELAB_ROOT__</string>
 __ENVIRONMENT_VARIABLES_BLOCK__
   <key>ProgramArguments</key>
   <array>
-    <string>__CLAWLAB_ROOT__/cmd</string>
+    <string>__AELAB_ROOT__/ae</string>
     <string>__AGENT_ID__</string>
     <string>start</string>
   </array>
@@ -24,8 +24,8 @@ __ENVIRONMENT_VARIABLES_BLOCK__
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>__CLAWLAB_ROOT__/state/logs/agent/__AGENT_ID__.log</string>
+  <string>__AELAB_ROOT__/state/logs/agent/__AGENT_ID__.log</string>
   <key>StandardErrorPath</key>
-  <string>__CLAWLAB_ROOT__/state/logs/agent/__AGENT_ID__.err</string>
+  <string>__AELAB_ROOT__/state/logs/agent/__AGENT_ID__.err</string>
 </dict>
 </plist>

@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>__PAGE_TITLE__</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #11161d;
+      --text: #d7e4ef;
+      --muted: #8ea1b3;
+      --accent: #7dd3fc;
+      --accent-strong: #0ea5e9;
+      --border: #223041;
+      --terminal-padding: 12px;
+      --terminal-bg: #0b0f14;
+      --collapsed-header-width: 124px;
+      --chrome-opacity: 0.86;
+      --chrome-collapsed-opacity: 0.64;
+    }
+    html, body { height: 100%; overflow: hidden; background: var(--terminal-bg); }
+    body {
+      margin: 0;
+      color: var(--text);
+      font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    .frame {
+      height: var(--frame-height, 100vh);
+      transform: translateY(var(--viewport-offset-top, 0px));
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      background: var(--terminal-bg);
+    }
+    html.chrome-hidden .topbar {
+      display: none;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      opacity: var(--chrome-opacity);
+      flex: 0 0 auto;
+      max-width: 100vw;
+      overflow: hidden;
+      will-change: max-width, border-color, border-radius, gap;
+      transition:
+        max-width 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        border-color 240ms ease,
+        border-radius 240ms ease,
+        gap 240ms ease;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .brand {
+      color: var(--text);
+      font-weight: 700;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+    .brand:hover {
+      color: var(--accent);
+    }
+    .topbar-toggle,
+    .keybar-toggle {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font: inherit;
+      flex: 0 0 auto;
+      transition:
+        background-color 180ms ease,
+        border-color 180ms ease,
+        color 180ms ease;
+    }
+    .topbar-toggle .icon-svg,
+    .keybar-toggle .icon-svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      fill: none;
+      transition: transform 200ms cubic-bezier(0.18, 0.89, 0.32, 1.18);
+    }
+    .topbar-toggle .icon-svg {
+      transform: rotate(90deg);
+    }
+    .topbar-toggle:hover,
+    .keybar-toggle:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    html.topbar-collapsed .topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 40;
+      align-self: flex-start;
+      justify-content: flex-start;
+      width: max-content;
+      max-width: var(--collapsed-header-width);
+      border-right: 1px solid var(--border);
+      border-bottom-right-radius: 8px;
+      gap: 10px;
+      opacity: var(--chrome-collapsed-opacity);
+    }
+    html.topbar-collapsed .topbar-left {
+      gap: 10px;
+    }
+    html.topbar-collapsed .topbar-toggle {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    html.topbar-collapsed .topbar-toggle .icon-svg {
+      transform: rotate(-90deg);
+    }
+    .meta {
+      display: flex;
+      flex-wrap: nowrap;
+      flex: 1 1 auto;
+      gap: 10px 14px;
+      min-width: 0;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 160ms ease, transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      transform: translateX(0);
+    }
+    .topbar-actions {
+      flex: 0 0 auto;
+      opacity: 1;
+      transition: opacity 160ms ease, transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      transform: translateX(0);
+    }
+    html.topbar-collapsed .meta,
+    html.topbar-collapsed .topbar-actions {
+      display: none;
+      opacity: 0;
+      transform: translateX(10px);
+      pointer-events: none;
+    }
+    .label {
+      position: relative;
+      display: inline-flex;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .meta > span {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 0.5ch;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .meta .label {
+      justify-content: flex-end;
+      min-width: 4ch;
+    }
+    .label-button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      font: inherit;
+    }
+    .label-picker {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .label-picker::-webkit-color-swatch-wrapper { padding: 0; }
+    .label-picker::-webkit-color-swatch { border: 0; }
+    .label-picker::-moz-color-swatch { border: 0; }
+    .label-text {
+      position: relative;
+      z-index: 1;
+      pointer-events: none;
+    }
+    code {
+      color: var(--text);
+      background: transparent;
+      padding: 0;
+      overflow-wrap: anywhere;
+    }
+    .meta code {
+      display: inline-block;
+      min-width: 0;
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      overflow-wrap: normal;
+      scrollbar-width: none;
+      vertical-align: bottom;
+      white-space: nowrap;
+      text-align: left;
+      -webkit-overflow-scrolling: touch;
+    }
+    .meta code::-webkit-scrollbar {
+      display: none;
+    }
+    .status {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      font: inherit;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #f59e0b;
+      box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.14);
+    }
+    .status.is-connected .status-dot {
+      background: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+    }
+    .status.is-closed .status-dot,
+    .status.is-error .status-dot {
+      background: #ef4444;
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
+    }
+    .topbar-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pin-toggle {
+      appearance: none;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .pin-toggle .icon-svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+      fill: none;
+    }
+    .pin-toggle:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .pin-toggle.is-pinned {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    html.is-tmux-session .pin-toggle {
+      display: none;
+    }
+    .terminal-wrap {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    #screen {
+      height: 100%;
+      overflow: hidden;
+      box-sizing: border-box;
+      background: var(--terminal-bg);
+      color: var(--text);
+      user-select: text;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    #screen .xterm,
+    #screen .xterm-viewport {
+      height: 100%;
+    }
+    #screen .xterm {
+      box-sizing: border-box;
+      padding: var(--terminal-padding) var(--terminal-padding) calc(var(--terminal-padding) / 2);
+    }
+    #screen .xterm,
+    #screen .xterm-screen,
+    #screen .xterm-viewport {
+      background: var(--terminal-bg) !important;
+    }
+    #screen .xterm-viewport {
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+    }
+    .keybar {
+      position: absolute;
+      top: var(--keybar-top, 0px);
+      left: 0;
+      right: 0;
+      z-index: 30;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      overflow-x: auto;
+      overflow-y: hidden;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      opacity: var(--chrome-opacity);
+      border-bottom: 1px solid var(--border);
+      max-height: 0;
+      padding: 0 12px;
+      border-bottom-width: 0;
+      transition:
+        max-height 220ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+        top 220ms ease,
+        padding-top 220ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+        padding-bottom 220ms cubic-bezier(0.18, 0.89, 0.32, 1.18),
+        border-bottom-width 220ms ease;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .keybar.is-expanded {
+      max-height: 52px;
+      padding-top: 8px;
+      padding-bottom: 8px;
+      border-bottom-width: 1px;
+    }
+    html.topbar-collapsed .keybar::before {
+      content: "";
+      flex: 0 0 var(--collapsed-header-width);
+      height: 1px;
+      pointer-events: none;
+    }
+    html.topbar-collapsed .keybar {
+      opacity: var(--chrome-collapsed-opacity);
+      top: 0;
+    }
+    .keybar::-webkit-scrollbar {
+      height: 4px;
+    }
+    .keybar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .keybar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+    .keybar-toggle.is-expanded {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    .keybar-toggle.is-expanded .icon-svg {
+      transform: rotate(180deg);
+    }
+    .mobile-key {
+      appearance: none;
+      min-width: 44px;
+      height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 12px;
+      flex: 0 0 auto;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    }
+    .mobile-key:hover {
+      border-color: var(--accent);
+    }
+    .mobile-key:active {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
+    .mobile-key.is-active {
+      color: #ffffff;
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+    }
+    @media (max-width: 640px) and (orientation: portrait) {
+      .topbar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 20;
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+      }
+      .topbar-left {
+        display: contents;
+      }
+      .topbar-toggle {
+        grid-column: 2;
+        grid-row: 1;
+      }
+      .brand {
+        grid-column: 1;
+        grid-row: 1;
+        justify-self: start;
+      }
+      .meta {
+        grid-column: 3;
+        grid-row: 1;
+        justify-self: stretch;
+        flex-direction: column;
+        gap: 1px;
+        overflow: hidden;
+        line-height: 1.12;
+        white-space: nowrap;
+      }
+      .meta > span {
+        display: inline-flex;
+        align-items: baseline;
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .meta code {
+        max-width: 100%;
+      }
+      #host-label-value {
+        display: block;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        vertical-align: bottom;
+        white-space: nowrap;
+      }
+      .cwd-meta {
+        display: inline-flex;
+      }
+      .topbar-actions {
+        grid-column: 4;
+        grid-row: 1;
+        justify-self: end;
+        align-self: center;
+      }
+      .status {
+        cursor: pointer;
+      }
+      #status-label {
+        display: none;
+      }
+      #screen .xterm {
+        padding-top: calc(var(--terminal-padding) + var(--keybar-top, 0px));
+      }
+      html.topbar-collapsed .topbar {
+        display: flex;
+      }
+      html.topbar-collapsed .topbar-left {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="topbar">
+      <div class="topbar-left">
+        <a class="brand" href="/" title="Open host root">aelab</a>
+        <button class="topbar-toggle" id="topbar-toggle" type="button" aria-expanded="true" aria-label="Collapse header" title="Collapse header">
+          <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="meta">
+          <span><span class="label" title="Change host terminal background"><span class="label-text">host</span><input class="label-picker" id="host-bg-picker" type="color" tabindex="-1" aria-label="Change host terminal background"></span> <code id="host-label-value">__HOST_LABEL__</code></span>
+          <span class="cwd-meta"><span class="label" title="Change cwd terminal background"><span class="label-text">cwd</span><input class="label-picker" id="cwd-bg-picker" type="color" tabindex="-1" aria-label="Change cwd terminal background"></span> <code id="cwd-label-value">__WORKSPACE_LABEL__</code></span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span class="status" id="status"><span class="status-dot" aria-hidden="true"></span><span id="status-label">connecting</span></span>
+        <button class="pin-toggle" id="pin-toggle" type="button" aria-pressed="false" aria-label="Pin terminal session" title="Pin terminal session">
+          <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
+        </button>
+        <button class="keybar-toggle" id="keybar-toggle" type="button" aria-controls="keybar" aria-expanded="false" aria-label="Show key bar" title="Show key bar">
+          <svg class="icon-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="terminal-wrap">
+      <div class="keybar" id="keybar" role="toolbar" aria-label="terminal key bar">
+__TTY_BUTTONS__
+      </div>
+      <div id="screen" aria-label="terminal output"></div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      const screen = document.getElementById('screen');
+      const status = document.getElementById('status');
+      const statusLabel = document.getElementById('status-label');
+      const topbar = document.querySelector('.topbar');
+      const pinToggle = document.getElementById('pin-toggle');
+      const hostBgPicker = document.getElementById('host-bg-picker');
+      const cwdBgPicker = document.getElementById('cwd-bg-picker');
+      const hostLabelValue = document.getElementById('host-label-value');
+      const cwdLabelValue = document.getElementById('cwd-label-value');
+      const keybar = document.getElementById('keybar');
+      const keybarToggle = document.getElementById('keybar-toggle');
+      const topbarToggle = document.getElementById('topbar-toggle');
+      const mobileKeys = Array.from(document.querySelectorAll('[data-mobile-key]'));
+      const mobileControlsQuery = window.matchMedia('(hover: none) and (pointer: coarse)');
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const defaultTerminalBg = '#0b0f14';
+      const defaultTerminalFg = '#d7e4ef';
+      const terminalPath = location.pathname.replace(/\/ws$/, '').replace(/\/?$/, '/');
+      const isTmuxSession = location.pathname.startsWith('/tty/tmux/');
+      if (isTmuxSession) document.documentElement.classList.add('is-tmux-session');
+      const hostName = hostLabelValue?.textContent || 'localhost';
+      const workspacePath = cwdLabelValue?.textContent || terminalPath;
+      const terminalBgKey = `aelab-tty-background:${terminalPath}`;
+      const hostBgKey = `aelab-tty-host-background:${hostName}`;
+      const lookURL = '/tty/look';
+      const portraitQuery = window.matchMedia('(orientation: portrait)');
+      function scrollCwdLabelToEnd() {
+        if (!cwdLabelValue) return;
+        cwdLabelValue.scrollLeft = cwdLabelValue.scrollWidth;
+      }
+      function syncHeaderOverlayMetrics() {
+        const overlaidHeader = portraitQuery.matches &&
+          !document.documentElement.classList.contains('chrome-hidden') &&
+          !document.documentElement.classList.contains('topbar-collapsed');
+        const top = overlaidHeader && topbar ? `${topbar.offsetHeight}px` : '0px';
+        document.documentElement.style.setProperty('--keybar-top', top);
+      }
+      function keySequence(key, shift) {
+        const ctrl = key.match(/^ctrl-([a-z])$/);
+        if (ctrl) return String.fromCharCode(ctrl[1].charCodeAt(0) - 96);
+        switch (key) {
+          case 'copy-mode':  return '\x01[';
+          case 'tmux-zoom':  return '\x01z';
+          case 'tmux-mouse': return '\x01m';
+          case 'enter':      return '\r';
+          case 'tab':        return shift ? '\x1b[Z'    : '\x09';
+          case 'escape':     return '\x1b';
+          case 'backspace':  return '\x7f';
+          case 'delete':     return shift ? '\x1b[3;2~' : '\x1b[3~';
+          case 'home':       return shift ? '\x1b[1;2H' : '\x1b[H';
+          case 'end':        return shift ? '\x1b[1;2F' : '\x1b[F';
+          case 'page-up':    return shift ? '\x1b[5;2~' : '\x1b[5~';
+          case 'page-down':  return shift ? '\x1b[6;2~' : '\x1b[6~';
+          case 'up':         return shift ? '\x1b[1;2A' : '\x1b[A';
+          case 'down':       return shift ? '\x1b[1;2B' : '\x1b[B';
+          case 'left':       return shift ? '\x1b[1;2D' : '\x1b[D';
+          case 'right':      return shift ? '\x1b[1;2C' : '\x1b[C';
+          default:           return null;
+        }
+      }
+      function setStatus(value) {
+        status.classList.remove('is-connected', 'is-closed', 'is-error');
+        if (value === 'connected') {
+          status.classList.add('is-connected');
+        } else if (value === 'closed') {
+          status.classList.add('is-closed');
+        } else if (value === 'error') {
+          status.classList.add('is-error');
+        }
+        statusLabel.textContent = value;
+      }
+      function setPinned(value) {
+        pinToggle?.classList.toggle('is-pinned', value);
+        pinToggle?.setAttribute('aria-pressed', value ? 'true' : 'false');
+        pinToggle?.setAttribute('aria-label', value ? 'Unpin terminal session' : 'Pin terminal session');
+        pinToggle?.setAttribute('title', value ? 'Unpin terminal session' : 'Pin terminal session');
+      }
+      if (typeof Terminal === 'undefined') {
+        setStatus('error');
+        screen.textContent = 'terminal renderer failed to load';
+        return;
+      }
+      const term = new Terminal({
+        cursorBlink: false,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+        fontSize: 14,
+        allowTransparency: true,
+        convertEol: false,
+        scrollback: 4000,
+        theme: {
+          background: localStorage.getItem(terminalBgKey) || localStorage.getItem(hostBgKey) || defaultTerminalBg,
+          foreground: defaultTerminalFg,
+          cursor: '#7dd3fc',
+          selectionBackground: 'rgba(125, 211, 252, 0.25)',
+        },
+      });
+
+      function applyTerminalTheme() {
+        const hostBackground = localStorage.getItem(hostBgKey) || defaultTerminalBg;
+        const background = localStorage.getItem(terminalBgKey) || hostBackground;
+        document.documentElement.style.setProperty('--terminal-bg', background);
+        if (hostBgPicker) hostBgPicker.value = hostBackground;
+        if (cwdBgPicker) cwdBgPicker.value = background;
+        term.options.theme = {
+          ...term.options.theme,
+          background,
+          foreground: defaultTerminalFg,
+        };
+        term.refresh(0, Math.max(0, term.rows - 1));
+      }
+
+      hostBgPicker?.addEventListener('input', (event) => {
+        const background = event.target.value;
+        localStorage.setItem(hostBgKey, background);
+        applyTerminalTheme();
+        saveLook({ terminalBgByHost: { [hostName]: background } });
+      });
+
+      cwdBgPicker?.addEventListener('input', (event) => {
+        const background = event.target.value;
+        localStorage.setItem(terminalBgKey, background);
+        applyTerminalTheme();
+        saveLook({ terminalBgByPath: { [workspacePath]: background } });
+      });
+
+      hostBgPicker?.closest('.label')?.addEventListener('click', (event) => {
+        if (!event.altKey && !mobileAltActive) return;
+        event.preventDefault();
+        setMobileAltActive(false);
+        localStorage.removeItem(hostBgKey);
+        applyTerminalTheme();
+        saveLook({ terminalBgByHost: { [hostName]: null } });
+      });
+
+      cwdBgPicker?.closest('.label')?.addEventListener('click', (event) => {
+        if (!event.altKey && !mobileAltActive) return;
+        event.preventDefault();
+        setMobileAltActive(false);
+        localStorage.removeItem(terminalBgKey);
+        applyTerminalTheme();
+        saveLook({ terminalBgByPath: { [workspacePath]: null } });
+      });
+      applyTerminalTheme();
+
+      function saveLook(update) {
+        fetch(lookURL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(update),
+          cache: 'no-store',
+        }).catch(() => {});
+      }
+
+      fetch(lookURL, { cache: 'no-store' })
+        .then((response) => response.ok ? response.json() : null)
+        .then((look) => {
+          const hostBackground = look?.terminalBgByHost?.[hostName];
+          const pathBackground = look?.terminalBgByPath?.[workspacePath];
+          if (hostBackground) {
+            localStorage.setItem(hostBgKey, hostBackground);
+          }
+          if (pathBackground) {
+            localStorage.setItem(terminalBgKey, pathBackground);
+          }
+          applyTerminalTheme();
+        })
+        .catch(() => {});
+
+      function bytesToBase64(bytes) {
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        return btoa(binary);
+      }
+
+      function base64ToBytes(value) {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+      }
+
+      function measureTerminalSize() {
+        const cell = term?._core?._renderService?.dimensions?.css?.cell;
+        let cellWidth = Number(cell?.width);
+        let cellHeight = Number(cell?.height);
+        if (!cellWidth || !cellHeight) {
+          const probe = document.createElement('span');
+          probe.textContent = 'M';
+          probe.style.position = 'absolute';
+          probe.style.visibility = 'hidden';
+          probe.style.font = getComputedStyle(screen).font;
+          document.body.appendChild(probe);
+          const metrics = probe.getBoundingClientRect();
+          probe.remove();
+          cellWidth = metrics.width || 8;
+          cellHeight = metrics.height || 16;
+        }
+        const styles = getComputedStyle(screen);
+        const xtermStyles = term.element ? getComputedStyle(term.element) : null;
+        const paddingLeft = parseFloat(xtermStyles?.paddingLeft || styles.getPropertyValue('--terminal-padding')) || 0;
+        const paddingRight = parseFloat(xtermStyles?.paddingRight || styles.getPropertyValue('--terminal-padding')) || 0;
+        const paddingTop = parseFloat(xtermStyles?.paddingTop || styles.getPropertyValue('--terminal-padding')) || 0;
+        const paddingBottom = parseFloat(xtermStyles?.paddingBottom || styles.getPropertyValue('--terminal-padding')) || 0;
+        const availableWidth = Math.max(0, screen.clientWidth - paddingLeft - paddingRight);
+        const availableHeight = Math.max(0, screen.clientHeight - paddingTop - paddingBottom);
+        const cols = Math.max(20, Math.floor(availableWidth / Math.max(cellWidth, 1)));
+        const rows = Math.max(8, Math.floor(availableHeight / Math.max(cellHeight, 1)));
+        return { cols, rows };
+      }
+
+      function fitTerminal() {
+        // term.resize() before term.open() throws and aborts the script.
+        if (!term.element) return;
+        syncHeaderOverlayMetrics();
+        scrollCwdLabelToEnd();
+        const { cols, rows } = measureTerminalSize();
+        term.resize(cols, rows);
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      }
+
+      function sendInput(value) {
+        if (!value || !socket || socket.readyState !== WebSocket.OPEN) return;
+        socket.send(JSON.stringify({ type: 'input', data: bytesToBase64(encoder.encode(value)) }));
+      }
+
+      pinToggle?.addEventListener('click', () => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const pinned = pinToggle.classList.contains('is-pinned');
+        socket.send(JSON.stringify({ type: pinned ? 'unpin' : 'pin' }));
+      });
+
+      let mobileAltActive = false;
+      function setMobileAltActive(active) {
+        mobileAltActive = active;
+        document.documentElement.classList.toggle('mobile-alt-active', active);
+        const button = document.querySelector('[data-mobile-key="alt"]');
+        button?.classList.toggle('is-active', active);
+        button?.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+
+      let mobileShiftActive = false;
+      function setMobileShiftActive(active) {
+        mobileShiftActive = active;
+        const button = document.querySelector('[data-mobile-key="shift"]');
+        button?.classList.toggle('is-active', active);
+        button?.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+
+      // Briefly toggle PTY width to force a SIGWINCH-driven redraw.
+      function reloadTty() {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const { cols, rows } = measureTerminalSize();
+        const altCols = Math.max(20, cols - 1);
+        socket.send(JSON.stringify({ type: 'resize', cols: altCols, rows }));
+        setTimeout(() => {
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+          }
+        }, 80);
+      }
+
+      keybarToggle?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+      });
+
+      keybarToggle?.addEventListener('click', () => {
+        const expanded = keybar?.classList.toggle('is-expanded') ?? false;
+        keybarToggle.classList.toggle('is-expanded', expanded);
+        keybarToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        keybarToggle.setAttribute('aria-label', expanded ? 'Hide key bar' : 'Show key bar');
+        keybarToggle.setAttribute('title', expanded ? 'Hide key bar' : 'Show key bar');
+      });
+
+      topbarToggle?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+      });
+
+      topbarToggle?.addEventListener('click', () => {
+        const collapsed = document.documentElement.classList.toggle('topbar-collapsed');
+        topbarToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        topbarToggle.setAttribute('aria-label', collapsed ? 'Expand header' : 'Collapse header');
+        topbarToggle.setAttribute('title', collapsed ? 'Expand header' : 'Collapse header');
+        requestAnimationFrame(fitTerminal);
+      });
+      topbar?.addEventListener('transitionend', (event) => {
+        if (event.propertyName === 'max-width') fitTerminal();
+        syncHeaderOverlayMetrics();
+      });
+
+      // iOS Safari's keyboard accessory bar shrinks visualViewport but not innerHeight.
+      function syncFrameHeight() {
+        const viewport = window.visualViewport;
+        const h = viewport?.height || window.innerHeight;
+        const offsetTop = viewport?.offsetTop || 0;
+        document.documentElement.style.setProperty('--frame-height', `${h}px`);
+        document.documentElement.style.setProperty('--viewport-offset-top', `${offsetTop}px`);
+        fitTerminal();
+      }
+      window.visualViewport?.addEventListener('scroll', syncFrameHeight);
+      window.visualViewport?.addEventListener('resize', syncFrameHeight);
+      syncFrameHeight();
+
+      portraitQuery.addEventListener?.('change', (event) => {
+        if (!event.matches) return;
+        if (!document.documentElement.classList.contains('chrome-hidden')) return;
+        document.documentElement.classList.remove('chrome-hidden');
+        requestAnimationFrame(fitTerminal);
+      });
+
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') return true;
+        const cmdOrCtrl = event.metaKey || event.ctrlKey;
+        if (!cmdOrCtrl) return true;
+        const key = event.key.toLowerCase();
+        if (key === 'k' && !event.shiftKey && !event.altKey) {
+          event.preventDefault();
+          keybarToggle?.click();
+          return false;
+        }
+        if (key === 'f' && event.shiftKey && !event.altKey) {
+          event.preventDefault();
+          document.documentElement.classList.toggle('chrome-hidden');
+          requestAnimationFrame(fitTerminal);
+          return false;
+        }
+        return true;
+      });
+
+      mobileKeys.forEach((button) => {
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+        });
+        button.addEventListener('pointerup', (event) => {
+          event.preventDefault();
+          const key = button.dataset.mobileKey;
+          if (key === 'alt') { setMobileAltActive(!mobileAltActive); return; }
+          if (key === 'shift') { setMobileShiftActive(!mobileShiftActive); return; }
+          if (key === 'reload-tty') { reloadTty(); return; }
+          if (key === 'scroll-up') { term.scrollLines(-Math.round(term.rows / 2)); return; }
+          if (key === 'scroll-down') { term.scrollLines(Math.round(term.rows / 2)); return; }
+          const seq = keySequence(key, mobileShiftActive);
+          if (seq) {
+            sendInput(seq);
+            if (mobileShiftActive) setMobileShiftActive(false);
+          }
+        });
+      });
+
+      term.open(screen);
+
+      let socket = null;
+      let connectTimer = null;
+
+      term.onData(sendInput);
+      term.onResize(({ cols, rows }) => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+      });
+
+      function connect() {
+        const wsUrl = new URL('ws', window.location.href);
+        wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        const initialSize = measureTerminalSize();
+        wsUrl.searchParams.set('cols', String(initialSize.cols));
+        wsUrl.searchParams.set('rows', String(initialSize.rows));
+        socket = new WebSocket(wsUrl);
+        socket.onopen = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('connected');
+          term.focus();
+          fitTerminal();
+        };
+        socket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'output' && typeof message.data === 'string') {
+              term.write(decoder.decode(base64ToBytes(message.data), { stream: true }));
+            } else if (message.type === 'session') {
+              setPinned(Boolean(message.pinned));
+            }
+          } catch (error) {
+            term.write(String(event.data));
+          }
+        };
+        socket.onclose = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('closed');
+        };
+        socket.onerror = () => {
+          if (connectTimer) {
+            clearTimeout(connectTimer);
+            connectTimer = null;
+          }
+          setStatus('error');
+        };
+        connectTimer = setTimeout(() => {
+          if (socket && socket.readyState === WebSocket.CONNECTING) {
+            setStatus('error');
+          }
+        }, 5000);
+      }
+
+      window.addEventListener('resize', fitTerminal);
+      window.addEventListener('focus', () => {
+        if (mobileControlsQuery.matches) return;
+        term.focus();
+      });
+      screen.addEventListener('click', () => {
+        term.focus();
+      });
+
+      // Touch swipes -> synthesized wheel events; xterm routes them to scrollback
+      // (or to tmux via mouse-wheel escapes in mouse mode). clientX/Y picks the pane.
+      {
+        const SCROLL_MULTIPLIER = 2.5;
+        let startY = 0;
+        let lastX = 0;
+        let lastY = 0;
+        let lastT = 0;
+        let velocity = 0;
+        let scrolling = false;
+        let momentumFrame = null;
+
+        const dispatchWheel = (deltaY) => {
+          const target = screen.querySelector('.xterm-screen') || screen;
+          target.dispatchEvent(new WheelEvent('wheel', {
+            deltaY: deltaY * SCROLL_MULTIPLIER,
+            deltaMode: 0,
+            clientX: lastX,
+            clientY: lastY,
+            bubbles: true,
+            cancelable: true,
+          }));
+        };
+
+        const stopMomentum = () => {
+          if (momentumFrame !== null) {
+            cancelAnimationFrame(momentumFrame);
+            momentumFrame = null;
+          }
+        };
+
+        screen.addEventListener('touchstart', (event) => {
+          if (event.touches.length !== 1) return;
+          stopMomentum();
+          startY = lastY = event.touches[0].clientY;
+          lastX = event.touches[0].clientX;
+          lastT = event.timeStamp;
+          velocity = 0;
+          scrolling = false;
+        }, { capture: true, passive: true });
+
+        screen.addEventListener('touchmove', (event) => {
+          if (event.touches.length !== 1) return;
+          const y = event.touches[0].clientY;
+          const x = event.touches[0].clientX;
+          if (!scrolling) {
+            if (Math.abs(y - startY) < 6) return;
+            scrolling = true;
+          }
+          const dy = lastY - y;
+          const dt = Math.max(1, event.timeStamp - lastT);
+          lastY = y;
+          lastX = x;
+          lastT = event.timeStamp;
+          event.preventDefault();
+          event.stopPropagation();
+          velocity = velocity * 0.7 + (dy / dt) * 16 * 0.3;
+          dispatchWheel(dy);
+        }, { capture: true, passive: false });
+
+        const endTouch = (event) => {
+          if (!scrolling) return;
+          event.stopPropagation();
+          scrolling = false;
+          if (Math.abs(velocity) < 1) return;
+          const step = () => {
+            dispatchWheel(velocity);
+            velocity *= 0.93;
+            if (Math.abs(velocity) < 0.5) {
+              momentumFrame = null;
+              return;
+            }
+            momentumFrame = requestAnimationFrame(step);
+          };
+          momentumFrame = requestAnimationFrame(step);
+        };
+
+        screen.addEventListener('touchend', endTouch, { capture: true });
+        screen.addEventListener('touchcancel', endTouch, { capture: true });
+      }
+      window.addEventListener('error', () => {
+        setStatus('error');
+      });
+      window.addEventListener('unhandledrejection', () => {
+        setStatus('error');
+      });
+
+      connect();
+      fitTerminal();
+      term.focus();
+    })();
+  </script>
+</body>
+</html>

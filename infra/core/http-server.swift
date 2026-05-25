@@ -13,7 +13,24 @@ struct Config {
     let port: UInt16
 }
 
-final class DashPageCache {
+let logFormatter: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+}()
+
+func log(_ message: String, level: String = "info") {
+    let ts = logFormatter.string(from: Date())
+#if os(Linux)
+    let stream = (level == "error" ? stderr! : stdout!)
+#else
+    let stream = (level == "error" ? stderr : stdout)
+#endif
+    fputs("[\(ts)] \(level) \(message)\n", stream)
+    fflush(stream)
+}
+
+final class IndexPageCache {
     private let repoRoot: String
     private let refreshInterval: TimeInterval
     private let lock = NSLock()
@@ -24,7 +41,7 @@ final class DashPageCache {
     init(repoRoot: String, refreshInterval: TimeInterval = 2.0) {
         self.repoRoot = repoRoot
         self.refreshInterval = refreshInterval
-        self.html = loadDashHTML(repoRoot: repoRoot)
+        self.html = loadIndexHTML(repoRoot: repoRoot)
     }
 
     func page() -> (html: Data?, renderError: String?) {
@@ -38,20 +55,20 @@ final class DashPageCache {
         lock.unlock()
 
         if cached == nil {
-            let result = renderDash(repoRoot: repoRoot)
+            let result = renderIndex(repoRoot: repoRoot)
             guard result.status == 0 else {
                 finishRefresh(html: nil)
                 return (nil, result.output)
             }
-            let rendered = loadDashHTML(repoRoot: repoRoot)
+            let rendered = loadIndexHTML(repoRoot: repoRoot)
             finishRefresh(html: rendered)
             return (rendered, nil)
         }
 
         if shouldRefresh {
             DispatchQueue.global(qos: .utility).async { [repoRoot] in
-                let result = renderDash(repoRoot: repoRoot)
-                self.finishRefresh(html: result.status == 0 ? loadDashHTML(repoRoot: repoRoot) : nil)
+                let result = renderIndex(repoRoot: repoRoot)
+                self.finishRefresh(html: result.status == 0 ? loadIndexHTML(repoRoot: repoRoot) : nil)
             }
         }
 
@@ -75,7 +92,7 @@ struct HTTPRequest {
 }
 
 func usage() -> Never {
-    fputs("usage: dash-http-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 2108]\n", stderr)
+    fputs("usage: http-server.swift --repo-root <path> [--bind 127.0.0.1] [--port 2108]\n", stderr)
     exit(1)
 }
 
@@ -167,10 +184,10 @@ func makeServerSocket(host: String, port: UInt16) -> Int32 {
     return serverFD
 }
 
-func renderDash(repoRoot: String) -> (status: Int32, output: String) {
+func renderIndex(repoRoot: String) -> (status: Int32, output: String) {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/bash")
-    process.arguments = [URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/commands/render.sh").path, "dash"]
+    process.arguments = [URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/commands/render.sh").path, "front"]
     process.currentDirectoryURL = URL(fileURLWithPath: repoRoot)
 
     let pipe = Pipe()
@@ -184,12 +201,12 @@ func renderDash(repoRoot: String) -> (status: Int32, output: String) {
         let output = String(data: data, encoding: .utf8) ?? ""
         return (process.terminationStatus, output)
     } catch {
-        return (1, "failed to render dash page: \(error)\n")
+        return (1, "failed to render index page: \(error)\n")
     }
 }
 
-func loadDashHTML(repoRoot: String) -> Data? {
-    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/generated/caddy/index.html").path
+func loadIndexHTML(repoRoot: String) -> Data? {
+    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("infra/generated/index.html").path
     return FileManager.default.contents(atPath: path)
 }
 
@@ -260,7 +277,7 @@ func redirectResponse(location: String, headOnly: Bool = false) -> Data {
     return data
 }
 
-func handleConnection(fd: Int32, config: Config, dashPageCache: DashPageCache) {
+func handleConnection(fd: Int32, config: Config, indexPageCache: IndexPageCache) {
     defer { close(fd) }
 
     var buffer = [UInt8](repeating: 0, count: 8192)
@@ -310,9 +327,9 @@ func handleConnection(fd: Int32, config: Config, dashPageCache: DashPageCache) {
         return
     }
 
-    let page = dashPageCache.page()
+    let page = indexPageCache.page()
     guard let html = page.html else {
-        let message = page.renderError ?? "dash page not found\n"
+        let message = page.renderError ?? "index page not found\n"
         sendAll(fd: fd, data: response(status: "500 Internal Server Error", contentType: "text/plain; charset=utf-8", body: Data(message.utf8), headOnly: headOnly))
         return
     }
@@ -321,15 +338,17 @@ func handleConnection(fd: Int32, config: Config, dashPageCache: DashPageCache) {
 }
 
 let config = parseArgs()
-let dashPageCache = DashPageCache(repoRoot: config.repoRoot)
+let indexPageCache = IndexPageCache(repoRoot: config.repoRoot)
 let serverFD = makeServerSocket(host: config.host, port: config.port)
+log("http server listening on \(config.host):\(config.port) (repo: \(config.repoRoot))")
 
 while true {
     let clientFD = accept(serverFD, nil, nil)
     if clientFD < 0 {
         if errno == EINTR { continue }
         perror("accept")
+        log("accept failed: errno=\(errno)", level: "error")
         continue
     }
-    handleConnection(fd: clientFD, config: config, dashPageCache: dashPageCache)
+    handleConnection(fd: clientFD, config: config, indexPageCache: indexPageCache)
 }
