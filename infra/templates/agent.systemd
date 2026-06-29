@@ -9,8 +9,8 @@ Group=__AELAB_GROUP__
 UMask=0002
 WorkingDirectory=__AELAB_ROOT__
 __PATH_BLOCK__
-EnvironmentFile=-__AELAB_ROOT__/config/custom/env/agents.env
-EnvironmentFile=-__AELAB_ROOT__/config/custom/env/agents/%i.env
+EnvironmentFile=-__AELAB_ROOT__/config/env/agents.env
+EnvironmentFile=-__AELAB_ROOT__/config/env/%i.env
 ExecStart=__AELAB_ROOT__/ae %i start
 Restart=always
 RestartSec=3s

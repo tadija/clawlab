@@ -16,7 +16,7 @@ Usage:
   ae remove <agent-id> [agent-id...] [-y|--yes]
   ae <agent-id> [setup|start|stop|tui|yolo|native-command...]
   ae <service-id> <native-command...>
-  ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render|update> [args...]
+  ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|web|log|render|update|deploy> [args...]
 
 Global commands:
   list    -> list existing agents
@@ -143,13 +143,11 @@ struct ServiceSpec {
 let rootURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let agentsURL = rootURL.appendingPathComponent("agents", isDirectory: true)
 let configRootURL = rootURL.appendingPathComponent("config", isDirectory: true)
-let customConfigURL = configRootURL.appendingPathComponent("custom", isDirectory: true)
-let repoConfigURL = customConfigURL.appendingPathComponent("repo.ini")
-let agentKindsURL = configRootURL.appendingPathComponent("agents", isDirectory: true)
-let servicesURL = configRootURL.appendingPathComponent("services", isDirectory: true)
-let customAgentKindsURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("agents", isDirectory: true)
-let customServicesURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("services", isDirectory: true)
-let customEnvURL = customConfigURL.appendingPathComponent("env", isDirectory: true)
+let repoConfigURL = configRootURL.appendingPathComponent("repo.toml")
+let hostConfigURL = configRootURL.appendingPathComponent("host.toml")
+let agentKindsURL = configRootURL.appendingPathComponent("agents.toml")
+let servicesURL = configRootURL.appendingPathComponent("services.toml")
+let customEnvURL = configRootURL.appendingPathComponent("env", isDirectory: true)
 
 var agentEntries: [URL] {
     (try? FileManager.default.contentsOfDirectory(
@@ -162,8 +160,12 @@ var agentEntries: [URL] {
 func stripQuotes(_ value: String) -> String {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.count >= 2 {
-        if (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"")) ||
-            (trimmed.hasPrefix("'") && trimmed.hasSuffix("'")) {
+        if trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") {
+            return String(trimmed.dropFirst().dropLast())
+                .replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        if trimmed.hasPrefix("'") && trimmed.hasSuffix("'") {
             return String(trimmed.dropFirst().dropLast())
         }
     }
@@ -207,7 +209,7 @@ func parseSectionedConfigFile(at url: URL) -> [String: [String: String]] {
 
         guard let currentSection, let equalsIndex = line.firstIndex(of: "=") else { continue }
         let key = String(line[..<equalsIndex]).trimmingCharacters(in: .whitespaces)
-        let value = String(line[line.index(after: equalsIndex)...]).trimmingCharacters(in: .whitespaces)
+        let value = stripQuotes(String(line[line.index(after: equalsIndex)...]).trimmingCharacters(in: .whitespaces))
         guard !key.isEmpty, !value.isEmpty else { continue }
         sections[currentSection, default: [:]][key] = value
     }
@@ -246,40 +248,20 @@ func parseEnvAssignments(_ value: String?) -> [(String, String)] {
     }
 }
 
-func envFileURLs(in directory: URL) -> [URL] {
-    guard let urls = try? FileManager.default.contentsOfDirectory(
-        at: directory,
-        includingPropertiesForKeys: [.isRegularFileKey],
-        options: [.skipsHiddenFiles]
-    ) else {
-        return []
-    }
-
-    return urls.filter { $0.pathExtension == "env" }
-}
-
 func fatalConfig(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
     exit(1)
 }
 
 func loadAgentKindSpecs() -> [AgentKindSpec] {
-    let fileNames = Set(envFileURLs(in: agentKindsURL).map(\.lastPathComponent))
-        .union(Set(envFileURLs(in: customAgentKindsURL).map(\.lastPathComponent)))
-        .sorted()
-
-    if fileNames.isEmpty {
-        return []
-    }
-
-    return fileNames.map { fileName in
-        let baseURL = agentKindsURL.appendingPathComponent(fileName)
-        let customURL = customAgentKindsURL.appendingPathComponent(fileName)
-        let values = parseEnvFile(at: baseURL).merging(parseEnvFile(at: customURL)) { _, custom in custom }
+    let sections = parseSectionedConfigFile(at: agentKindsURL)
+    let overrideSections = parseSectionedConfigFile(at: hostConfigURL)
+    return sections.keys.sorted().map { kind in
+        let values = (sections[kind] ?? [:]).merging(overrideSections["agents.\(kind)"] ?? [:]) { _, override in override }
 
         func require(_ key: String) -> String {
             guard let value = values[key], !value.isEmpty else {
-                fatalConfig("agent kind config \(fileName) is missing \(key)")
+                fatalConfig("agent kind config \(kind) is missing \(key)")
             }
             return value
         }
@@ -310,26 +292,21 @@ let agentKindSpecs = loadAgentKindSpecs()
 let agentKindsByName = Dictionary(uniqueKeysWithValues: agentKindSpecs.map { ($0.kind, $0) })
 
 func loadServiceSpecs() -> [ServiceSpec] {
-    let fileNames = Set(envFileURLs(in: servicesURL).map(\.lastPathComponent))
-        .union(Set(envFileURLs(in: customServicesURL).map(\.lastPathComponent)))
-        .sorted()
-
-    return fileNames.map { fileName in
-        let serviceID = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
-        let baseURL = servicesURL.appendingPathComponent(fileName)
-        let customURL = customServicesURL.appendingPathComponent(fileName)
-        let values = parseEnvFile(at: baseURL).merging(parseEnvFile(at: customURL)) { _, custom in custom }
+    let sections = parseSectionedConfigFile(at: servicesURL)
+    let overrideSections = parseSectionedConfigFile(at: hostConfigURL)
+    return sections.keys.sorted().map { serviceID in
+        let values = (sections[serviceID] ?? [:]).merging(overrideSections["services.\(serviceID)"] ?? [:]) { _, override in override }
 
         func require(_ key: String) -> String {
             guard let value = values[key], !value.isEmpty else {
-                fatalConfig("service config \(fileName) is missing \(key)")
+                fatalConfig("service config \(serviceID) is missing \(key)")
             }
             return value
         }
 
         let id = require("AELAB_SERVICE_ID")
         guard id == serviceID else {
-            fatalConfig("service config \(fileName) does not match AELAB_SERVICE_ID=\(id)")
+            fatalConfig("service config \(serviceID) does not match AELAB_SERVICE_ID=\(id)")
         }
 
         return ServiceSpec(
@@ -400,7 +377,7 @@ func parseArgs(_ args: [String]) -> ParsedCommand {
         exit(1)
     case GlobalCommand.infra.rawValue:
         if args.count < 3 {
-            fputs("usage: ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|log|render> [args...]\n", stderr)
+            fputs("usage: ae infra <bootstrap|install|uninstall|start|stop|restart|status|doctor|web|log|render|update|deploy> [args...]\n", stderr)
             exit(1)
         }
         return .globalInfra(subcommand: args[2], extra: Array(args.dropFirst(3)))
@@ -483,7 +460,7 @@ func resolveExecutable(_ command: String) -> String {
 
     fputs("executable not found in PATH: \(command)\n", stderr)
     fputs("run ./ae <agent-id> bootstrap to install manually\n", stderr)
-    fputs("or set up config/custom/host/.env file and run ./ae infra bootstrap\n", stderr)
+    fputs("or set up config/host.toml file and run ./ae infra bootstrap\n", stderr)
     exit(1)
 }
 
@@ -661,8 +638,8 @@ func spawnAndWait(_ argv: [String]) -> Int32 {
 
 func infraScriptPath(_ subcommand: String) -> String {
     let infraRoot = rootURL.appendingPathComponent("infra")
-    let builtInSubcommands: Set<String> = ["bootstrap", "install", "uninstall", "start", "stop", "restart", "status", "doctor", "log", "render", "update"]
-    let customScriptsURL = customConfigURL.appendingPathComponent("override", isDirectory: true).appendingPathComponent("infra", isDirectory: true)
+    let builtInSubcommands: Set<String> = ["bootstrap", "install", "uninstall", "start", "stop", "restart", "status", "doctor", "web", "log", "render", "update", "deploy"]
+    let customScriptsURL = configRootURL.appendingPathComponent("infra", isDirectory: true)
     let customScriptURL = customScriptsURL.appendingPathComponent("\(subcommand).sh")
 
     if FileManager.default.isExecutableFile(atPath: customScriptURL.path) {
@@ -795,9 +772,7 @@ func applyPerAgentEnvironment(agent: String) {
     let sharedEnvURL = customEnvURL.appendingPathComponent("agents.env")
     applyEnvFile(at: sharedEnvURL, agentURL: agentURL)
 
-    let envURL = customEnvURL
-        .appendingPathComponent("agents", isDirectory: true)
-        .appendingPathComponent("\(agentId(from: agent)).env")
+    let envURL = customEnvURL.appendingPathComponent("\(agentId(from: agent)).env")
     applyEnvFile(at: envURL, agentURL: agentURL)
 }
 

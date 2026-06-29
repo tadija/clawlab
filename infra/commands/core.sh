@@ -258,88 +258,124 @@ resolve_requested_items() {
   done
 }
 
-host_env_file() {
-  printf '%s/config/custom/host/.env' "$(repo_root)"
+host_config_file() {
+  printf '%s/config/host.toml' "$(repo_root)"
 }
 
 repo_cfg_file() {
-  printf '%s/config/custom/repo.ini' "$(repo_root)"
+  printf '%s/config/repo.toml' "$(repo_root)"
+}
+
+infra_hook_file() {
+  local hook="$1"
+  printf '%s/config/infra/hooks/%s.sh' "$(repo_root)" "$hook"
+}
+
+run_infra_hook() {
+  local hook="$1"
+  shift || true
+  local file
+  local env_file
+
+  file="$(infra_hook_file "$hook")"
+  [[ -f "$file" ]] || return 0
+  if [[ ! -x "$file" ]]; then
+    log "hook $hook exists but is not executable: $file"
+    return 0
+  fi
+
+  if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    printf '[%s] dry-run: hook %s' "${AELAB_LOG_PREFIX:-aelab}" "$hook"
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+
+  log "running hook $hook"
+  env_file="$(mktemp "${TMPDIR:-/tmp}/aelab-hook-env.XXXXXX")"
+  if ! AELAB_HOOK_NAME="$hook" AELAB_HOOK_ENV_FILE="$env_file" bash "$file" "$@"; then
+    rm -f "$env_file"
+    return 1
+  fi
+  if [[ -s "$env_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$env_file"
+  fi
+  rm -f "$env_file"
+}
+
+shell_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"
+  value="${value//\`/\\\`}"
+  printf '"%s"' "$value"
+}
+
+toml_section_entries() {
+  local file="$1"
+  local wanted_section="$2"
+  [[ -f "$file" ]] || return 0
+
+  awk -v wanted_section="$wanted_section" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    function strip_quotes(value) {
+      value = trim(value)
+      if (value ~ /^".*"$/ || value ~ /^\047.*\047$/) {
+        value = substr(value, 2, length(value) - 2)
+        gsub(/\\"/, "\"", value)
+        gsub(/\\\\/, "\\", value)
+      }
+      return value
+    }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ {
+      current_section = $0
+      sub(/^[[:space:]]*\[/, "", current_section)
+      sub(/\][[:space:]]*$/, "", current_section)
+      current_section = trim(current_section)
+      next
+    }
+    current_section != wanted_section { next }
+    {
+      split($0, parts, "=")
+      key = trim(parts[1])
+      value = strip_quotes(substr($0, index($0, "=") + 1))
+      if (key != "" && value != "") {
+        print key "\t" value
+      }
+    }
+  ' "$file"
 }
 
 repo_cfg_value() {
   local section="$1"
   local key="$2"
 
-  [[ -f "$(repo_cfg_file)" ]] || return 0
-
-  awk -v wanted_section="$section" -v wanted_key="$key" '
-    function trim(value) {
-      sub(/^[[:space:]]+/, "", value)
-      sub(/[[:space:]]+$/, "", value)
-      return value
-    }
-
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-
-    /^\[[^][]+\][[:space:]]*$/ {
-      current_section = substr($0, 2, length($0) - 2)
-      current_section = trim(current_section)
-      next
-    }
-
-    current_section != wanted_section { next }
-
-    {
-      split($0, parts, "=")
-      key = trim(parts[1])
-      value = trim(substr($0, index($0, "=") + 1))
-      if (key == wanted_key && value != "") {
-        print value
-        exit
-      }
-    }
-  ' "$(repo_cfg_file)"
+  toml_section_entries "$(repo_cfg_file)" "$section" |
+    awk -F'\t' -v wanted_key="$key" '$1 == wanted_key { print $2; exit }'
 }
 
 repo_cfg_entries() {
   local section="$1"
 
-  [[ -f "$(repo_cfg_file)" ]] || return 0
-
-  awk -v wanted_section="$section" '
-    function trim(value) {
-      sub(/^[[:space:]]+/, "", value)
-      sub(/[[:space:]]+$/, "", value)
-      return value
-    }
-
-    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
-
-    /^\[[^][]+\][[:space:]]*$/ {
-      current_section = substr($0, 2, length($0) - 2)
-      current_section = trim(current_section)
-      next
-    }
-
-    current_section != wanted_section { next }
-
-    {
-      split($0, parts, "=")
-      key = trim(parts[1])
-      value = trim(substr($0, index($0, "=") + 1))
-      if (key != "" && value != "") {
-        print key "\t" value
-      }
-    }
-  ' "$(repo_cfg_file)"
+  toml_section_entries "$(repo_cfg_file)" "$section"
 }
 
 load_host_env() {
   local file
-  file="$(host_env_file)"
-  if [[ -f "$file" ]]; then
-    # shellcheck disable=SC1090
-    source "$file"
+  file="$(host_config_file)"
+  [[ -f "$file" ]] || return 0
+
+  eval "$(toml_section_env "$file" "")"
+  if [[ -n "${AELAB_PATH:-}" ]]; then
+    PATH="$(expand_runtime_placeholders "$AELAB_PATH")"
+    export PATH
   fi
 }
 
@@ -386,38 +422,19 @@ log() {
 
 print_no_requested_items_hint() {
   echo "No agents or services requested."
-  echo "Check config/custom/host/.env for AELAB_AGENTS and AELAB_SERVICES."
+  echo "Check config/host.toml for AELAB_AGENTS and AELAB_SERVICES."
 }
 
 service_manifest_dir() {
-  printf '%s/config/services' "$(repo_root)"
-}
-
-custom_service_manifest_dir() {
-  printf '%s/config/custom/override/services' "$(repo_root)"
+  printf '%s/config/services.toml' "$(repo_root)"
 }
 
 service_definition_ids() {
-  local file
-
-  {
-    for file in "$(service_manifest_dir)"/*.env; do
-      [[ -e "$file" ]] || continue
-      basename "$file" .env
-    done
-    for file in "$(custom_service_manifest_dir)"/*.env; do
-      [[ -e "$file" ]] || continue
-      basename "$file" .env
-    done
-  } | sort -u
+  toml_section_names "$(service_manifest_dir)"
 }
 
 agent_kind_manifest_dir() {
-  printf '%s/config/agents' "$(repo_root)"
-}
-
-custom_agent_kind_manifest_dir() {
-  printf '%s/config/custom/override/agents' "$(repo_root)"
+  printf '%s/config/agents.toml' "$(repo_root)"
 }
 
 service_templates_dir() {
@@ -485,27 +502,46 @@ uninstall_sudoers_aelab() {
 }
 
 service_manifest_path() {
-  local service_id="$1"
-  printf '%s/%s.env' "$(service_manifest_dir)" "$service_id"
-}
-
-custom_service_manifest_path() {
-  local service_id="$1"
-  printf '%s/%s.env' "$(custom_service_manifest_dir)" "$service_id"
+  service_manifest_dir
 }
 
 service_definition_exists() {
-  [[ -f "$(service_manifest_path "$1")" || -f "$(custom_service_manifest_path "$1")" ]]
+  toml_section_exists "$(service_manifest_dir)" "$1"
 }
 
 agent_kind_manifest_path() {
-  local kind="$1"
-  printf '%s/%s.env' "$(agent_kind_manifest_dir)" "$kind"
+  agent_kind_manifest_dir
 }
 
-custom_agent_kind_manifest_path() {
-  local kind="$1"
-  printf '%s/%s.env' "$(custom_agent_kind_manifest_dir)" "$kind"
+toml_section_names() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk '
+    /^[[:space:]]*\[[^][]+\][[:space:]]*$/ {
+      section = $0
+      sub(/^[[:space:]]*\[/, "", section)
+      sub(/\][[:space:]]*$/, "", section)
+      print section
+    }
+  ' "$file" | sort -u
+}
+
+toml_section_exists() {
+  local file="$1"
+  local section="$2"
+  toml_section_names "$file" | grep -qxF "$section"
+}
+
+toml_section_env() {
+  local file="$1"
+  local wanted_section="$2"
+  local key
+  local value
+
+  while IFS=$'\t' read -r key value; do
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    printf '%s=%s\n' "$key" "$(shell_quote "$value")"
+  done < <(toml_section_entries "$file" "$wanted_section")
 }
 
 reset_service_definition() {
@@ -577,25 +613,15 @@ require_service_field() {
 
 load_service_definition() {
   local service_id="$1"
-  local file
-  local custom_file
-  file="$(service_manifest_path "$service_id")"
-  custom_file="$(custom_service_manifest_path "$service_id")"
 
-  if [[ ! -f "$file" && ! -f "$custom_file" ]]; then
+  if ! service_definition_exists "$service_id"; then
     echo "unknown service: $service_id"
     exit 1
   fi
 
   reset_service_definition
-  if [[ -f "$file" ]]; then
-    # shellcheck disable=SC1090
-    source "$file"
-  fi
-  if [[ -f "$custom_file" ]]; then
-    # shellcheck disable=SC1090
-    source "$custom_file"
-  fi
+  eval "$(toml_section_env "$(service_manifest_dir)" "$service_id")"
+  eval "$(toml_section_env "$(host_config_file)" "services.${service_id}")"
 
   require_service_field AELAB_SERVICE_ID "$service_id"
   require_service_field AELAB_SERVICE_DESCRIPTION "$service_id"
@@ -624,20 +650,10 @@ service_manifest_field_value() {
   local field="$2"
 
   (
-    local file
-    local custom_file
-    file="$(service_manifest_path "$service_id")"
-    custom_file="$(custom_service_manifest_path "$service_id")"
-    [[ -f "$file" || -f "$custom_file" ]] || exit 0
+    service_definition_exists "$service_id" || exit 0
     reset_service_definition
-    if [[ -f "$file" ]]; then
-      # shellcheck disable=SC1090
-      source "$file"
-    fi
-    if [[ -f "$custom_file" ]]; then
-      # shellcheck disable=SC1090
-      source "$custom_file"
-    fi
+    eval "$(toml_section_env "$(service_manifest_dir)" "$service_id")"
+    eval "$(toml_section_env "$(host_config_file)" "services.${service_id}")"
     printf '%s' "${!field:-}"
   )
 }
@@ -714,25 +730,15 @@ run_service_installer() {
 
 load_agent_kind_definition() {
   local kind="$1"
-  local file
-  local custom_file
-  file="$(agent_kind_manifest_path "$kind")"
-  custom_file="$(custom_agent_kind_manifest_path "$kind")"
 
-  if [[ ! -f "$file" && ! -f "$custom_file" ]]; then
+  if ! toml_section_exists "$(agent_kind_manifest_dir)" "$kind"; then
     echo "unknown agent kind: $kind"
     exit 1
   fi
 
   reset_agent_kind_definition
-  if [[ -f "$file" ]]; then
-    # shellcheck disable=SC1090
-    source "$file"
-  fi
-  if [[ -f "$custom_file" ]]; then
-    # shellcheck disable=SC1090
-    source "$custom_file"
-  fi
+  eval "$(toml_section_env "$(agent_kind_manifest_dir)" "$kind")"
+  eval "$(toml_section_env "$(host_config_file)" "agents.${kind}")"
 
   if [[ -z "${AELAB_AGENT_KIND:-}" ]]; then
     echo "agent kind manifest ${kind} is missing AELAB_AGENT_KIND"
@@ -935,21 +941,21 @@ install_systemd_agent_unit_template() {
 }
 
 agent_shared_env_file_path() {
-  printf '%s/config/custom/env/agents.env' "${AELAB_ROOT:-$(aelab_root)}"
+  printf '%s/config/env/agents.env' "${AELAB_ROOT:-$(aelab_root)}"
 }
 
 agent_env_file_path() {
   local agent_id="$1"
-  printf '%s/config/custom/env/agents/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$agent_id"
+  printf '%s/config/env/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$agent_id"
 }
 
 service_shared_env_file_path() {
-  printf '%s/config/custom/env/services.env' "${AELAB_ROOT:-$(aelab_root)}"
+  printf '%s/config/env/services.env' "${AELAB_ROOT:-$(aelab_root)}"
 }
 
 service_env_file_path() {
   local service_id="$1"
-  printf '%s/config/custom/env/services/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$service_id"
+  printf '%s/config/env/%s.env' "${AELAB_ROOT:-$(aelab_root)}" "$service_id"
 }
 
 agent_stdout_log_path() {

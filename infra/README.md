@@ -1,9 +1,12 @@
-# aelab-infra
+# infra
 
 **host bootstrap and service supervision for aelab**
 
-> **works on**: macOS | Linux | WSL  
-> **docs**: [home](../README.md) | [config](../config/README.md) | infra  
+> **docs**: [home](../README.md) | [config](../config/README.md) | infra
+>  
+> **play with**: [openclaw](https://github.com/openclaw/openclaw) | [picoclaw](https://github.com/sipeed/picoclaw) | [zeroclaw](https://github.com/zeroclaw-labs/zeroclaw) | [nullclaw](https://github.com/nullclaw/nullclaw) | [nanobot](https://github.com/HKUDS/nanobot) | [pi](https://github.com/earendil-works/pi) | [hermes](https://github.com/nousresearch/hermes-agent) | [moltis](https://github.com/moltis-org/moltis) | [mercury](https://github.com/cosmicstack-labs/mercury-agent) | [goose](https://github.com/block/goose) | [codex](https://github.com/openai/codex) | [claude](https://github.com/anthropics/claude-code) | [gemini](https://github.com/google-gemini/gemini-cli)  
+>
+> **works on**: macOS | Linux | WSL
 
 ## overview
 
@@ -13,23 +16,25 @@ This is what makes a multi-agent setup not just configurable, but operable: boot
 
 ## how it works
 
-- `config/custom/host/.env` says which agents and services belong on a host
-- manifests in [`config/agents/`](../config/agents/) and [`config/services/`](../config/services/) describe how they run
-- [`config/custom/repo.ini`](../config/custom/repo.ini) supplies ports, host aliases, and shared derived values
+- `config/host.toml` says which agents and services belong on a host
+- manifests in [`config/agents.toml`](../config/agents.toml) and [`config/services.toml`](../config/services.toml) describe how they run
+- [`config/repo.toml`](../config/repo.toml) supplies repo-wide ports, host aliases, and shared derived values
+- `config/host.toml` can also supply optional gitignored agent/service manifest overrides
 - templates in [`infra/templates/`](templates/) render launchd/systemd artifacts and generated web-facing files
 - `./ae infra ...` installs, starts, stops, inspects, and repairs the result
 
 ## implementation map
 
-- `config/custom/host/.env` declares what one machine should run, copied from [`.env.example-macos`](../config/custom/host/.env.example-macos), [`.env.example-linux`](../config/custom/host/.env.example-linux), or [`.env.example-wsl`](../config/custom/host/.env.example-wsl)
-- [`config/agents/`](../config/agents/) defines agent kind defaults, with overrides in [`config/custom/override/agents/`](../config/custom/override/agents/)
-- [`config/custom/repo.ini`](../config/custom/repo.ini) defines parsed repo-wide config such as host aliases and gateway ports
-- [`config/services/`](../config/services/) defines shared service defaults, with overrides in [`config/custom/override/services/`](../config/custom/override/services/)
+- `config/host.toml` declares what one machine should run, copied from [`host.example.toml`](../config/host.example.toml)
+- [`config/agents.toml`](../config/agents.toml) defines agent kind defaults
+- [`config/repo.toml`](../config/repo.toml) defines parsed repo-wide config
+- `config/host.toml` can define host-local `[agents.<kind>]` and `[services.<service>]` overrides
+- [`config/services.toml`](../config/services.toml) defines shared service defaults
 - [`infra/templates/`](templates/) holds launchd/systemd templates
 - [`infra/core/`](core/) holds the built-in HTTP and tty server sources/templates
 - `./ae infra ...` is the public entrypoint
 - `infra/commands/*.sh` are implementation scripts for rendering, installing, lifecycle, status, and logs
-- `config/custom/override/infra/*.sh` adds private infra subcommands, or overrides same-name built-in commands
+- `config/infra/*.sh` adds private infra subcommands, or overrides same-name built-in commands
 - infra is intentionally template-driven so custom agent/service kinds can be added without changing the core layout
 
 ## command groups
@@ -44,14 +49,16 @@ This is what makes a multi-agent setup not just configurable, but operable: boot
 ./ae infra stop [agents|services|agent-id|service-id...]       # stop managed services and agents
 ./ae infra restart [agents|services|agent-id|service-id...]    # stop then start managed services and agents
 ./ae infra update [agents|services|agent-id|service-id...] [--no-pull] [--no-restart] [--dry-run]  # pull latest and restart targets; defaults to core
+./ae infra deploy [host...]                                    # ask hosts from [deploy-hosts] to run infra update
 ```
 
 ### Inspection and rendering
 
 ```bash
 ./ae infra doctor [agents|services|agent-id|service-id...]     # print host diagnostics and flag unhealthy requested items
+./ae infra web                                                 # open the web UI from [hosts] or localhost
 ./ae infra log [agents|services|agent-id|service-id...]        # show stdout/stderr logs
-./ae infra status [agents|services|agent-id|service-id...]     # show service-manager status
+./ae infra status [--details] [agents|services|agent-id|service-id...]     # show compact service-manager view or detailed runtime view
 ./ae infra render <all|brew|caddy|front>                       # render generated infra files
 ```
 
@@ -60,7 +67,7 @@ This is what makes a multi-agent setup not just configurable, but operable: boot
 ### Default host flow
 
 ```bash
-./ae infra install
+./ae infra bootstrap
 ./ae infra start
 ./ae infra status
 ./ae infra doctor
@@ -92,7 +99,7 @@ Some infra commands invoke `sudo` because `aelab` installs and controls system-l
 - `install` writes systemd units under `/etc/systemd/system` or launchd plists under `/Library/LaunchDaemons`, and may adjust ownership of `state/`
 - `uninstall` removes those units/plists and stops/disables matching services
 - `start`, `stop`, and `restart` call `systemctl` or system `launchctl`
-- `bootstrap` may remove leftover units/plists that no longer match `config/custom/host/.env`
+- `bootstrap` may remove leftover units/plists that no longer match `config/host.toml`
 
 Commands that only inspect or render local files, such as `status`, `doctor`, `log`, and `render`, should not require sudo.
 
@@ -154,27 +161,25 @@ sudo chown -R "$USER":staff /Users/Shared/aelab
 
 ## host config
 
-`config/custom/host/.env` is the per-machine assignment file.
+`config/host.toml` is the per-machine assignment file.
 
-### Copy the matching platform example
+### Copy the host example
 
 ```bash
-cp config/custom/host/.env.example-macos config/custom/host/.env
-# or
-cp config/custom/host/.env.example-linux config/custom/host/.env
-# or
-cp config/custom/host/.env.example-wsl config/custom/host/.env
+cp config/host.example.toml config/host.toml
 ```
 
-```bash
-AELAB_AGENTS="021 022 023 024 025"
-AELAB_SERVICES="core"
-AELAB_HOST=app-server
-AELAB_USER=agent
-AELAB_GROUP=staff
-AELAB_ROOT=/Users/Shared/aelab
-AELAB_PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-AELAB_PROJECTS="aelab=/Users/Shared/aelab app=/Users/Shared/aelab/shared/projects/app"
+Uncomment one platform block and edit it for the current host.
+
+```toml
+AELAB_AGENTS = "021 022 023 024 025"
+AELAB_SERVICES = "core"
+AELAB_HOST = "app-server"
+AELAB_USER = "agent"
+AELAB_GROUP = "staff"
+AELAB_ROOT = "/Users/Shared/aelab"
+AELAB_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+AELAB_PROJECTS = "aelab=/Users/Shared/aelab app=/Users/Shared/aelab/shared/projects/app"
 ```
 
 ### Host fields
@@ -204,7 +209,7 @@ With no explicit args, infra lifecycle commands use both host-assigned services 
 
 ## bootstrap, install, and uninstall
 
-These commands prepare the host and manage service-manager artifacts. With no explicit args, they use both host-assigned services and agents from `config/custom/host/.env`.
+These commands prepare the host and manage service-manager artifacts. With no explicit args, they use both host-assigned services and agents from `config/host.toml`.
 
 ### Common commands
 
@@ -217,7 +222,7 @@ These commands prepare the host and manage service-manager artifacts. With no ex
 ./ae infra uninstall core
 ```
 
-`bootstrap` installs packages and runtime prerequisites, runs installer hooks, prepares the base local state layout, removes service-manager leftover artifacts that are no longer part of the current host assignment, and installs service-manager artifacts for the requested host items.
+`bootstrap` validates host readiness, installs packages and runtime prerequisites, runs installer hooks, prepares the base local state layout, removes service-manager leftover artifacts that are no longer part of the current host assignment, and installs service-manager artifacts for the requested host items.
 
 `install` writes launchd plists or systemd units for the requested host items and, on its first run, drops `/etc/sudoers.d/aelab` so subsequent lifecycle commands don't prompt for a password (see "sudoers allowlist" above).
 
@@ -225,26 +230,27 @@ These commands prepare the host and manage service-manager artifacts. With no ex
 
 ### What `bootstrap.sh` does
 
+- runs internal preflight validation for the requested host items
 - renders `infra/generated/Brewfile`
 - runs `brew bundle`
-- runs any enabled agent-kind installer hooks declared in `config/agents/*.env` or `config/custom/override/agents/*.env`
-- runs any enabled service installer hooks declared in `config/services/*.env` or `config/custom/override/services/*.env`
+- runs any enabled agent-kind installer hooks declared in `config/agents.toml` or host-local `config/host.toml` overrides
+- runs any enabled service installer hooks declared in `config/services.toml` or host-local `config/host.toml` overrides
 - creates the base `state/` layout
-- removes leftover service-manager artifacts no longer assigned in `config/custom/host/.env`
+- removes leftover service-manager artifacts no longer assigned in `config/host.toml`
 - runs `install.sh` for the requested host items
 
 Services with `AELAB_SERVICE_INSTALL_OPTIONAL="true"` are best-effort during bootstrap/install: installer failures are reported as warnings and their Homebrew dependencies are left out of the generated Brewfile.
 
 ### What `install.sh` does
 
-- resolves requested agent ids and services from explicit args or `config/custom/host/.env`
+- resolves requested agent ids and services from explicit args or `config/host.toml`
 - installs launchd plists or systemd units for those items
 - ensures service runtime/log directories exist
 - renders the Caddy config when `caddy` is being installed
 
 ### What `uninstall.sh` does
 
-- resolves requested agent ids and services from explicit args or `config/custom/host/.env`
+- resolves requested agent ids and services from explicit args or `config/host.toml`
 - stops and disables matching launchd plists or systemd units
 - removes installed plist/unit files for requested agents and services
 - reloads systemd when unit files were removed on Linux
@@ -268,26 +274,35 @@ These commands control installed launchd/systemd items. Services are resolved be
 
 `start.sh` does the following:
 
-- resolves requested agent ids and services from explicit args or `config/custom/host/.env`
+- resolves requested agent ids and services from explicit args or `config/host.toml`
 - repairs group ownership and group-writable modes under requested agent directories and service state paths
 - refreshes agent service-manager artifacts before starting agents
 - starts agents through `agent@<id>` systemd units on Linux or rendered launchd plists on macOS
 - starts managed agents with a group-writable umask so regenerated files remain readable by repo users in `AELAB_GROUP`
 - starts services through their rendered service-manager artifacts
 - refreshes generated index/Caddy outputs when starting `core-http` or `caddy`
-- does not run installer hooks; use `bootstrap` or `install` for installer/setup work
+- does not run validation or installer hooks; use `bootstrap` or `install` for setup work
 
 Set `AELAB_LOG_VERBOSE=1` to print extra diagnostics from repair steps during commands such as `./ae infra start`.
 
 `stop.sh` does the following:
 
-- resolves requested agent ids and services from explicit args or `config/custom/host/.env`
+- resolves requested agent ids and services from explicit args or `config/host.toml`
 - stops and disables matching launchd plists or systemd units
 
 `restart.sh` does the following:
 
 - runs `stop.sh` with the same args
 - runs `start.sh` with the same args
+
+`deploy.sh` reads `[deploy-hosts]` from `config/repo.toml`, connects over SSH, and runs `bash infra/commands/update.sh --yes` inside each remote checkout. The remote update path is Bash-only, so deploy can repair or update hosts before Swift is installed. With no host args it deploys every configured host. Pass host names to limit the run, `--dry-run` to print the SSH commands, or `--` to pass remaining args to remote `update`.
+
+`update.sh` runs optional executable hooks from `config/infra/hooks/`:
+
+- `pre-update.sh` runs before `git fetch`, so it can prepare SSH auth with `AELAB_SSH_KEY`; absolute, `~/.ssh/...`, and repo-relative paths are supported
+- `post-update.sh` runs after `pre-update` on success, skip, or failure; it receives `AELAB_UPDATE_EXIT_STATUS`
+
+Hooks receive the requested update targets as arguments, such as `core`. On WSL, a host-local `pre-update.sh` can reset Tailscale serve before restart, and `post-update.sh` can restore it afterward.
 
 ## doctor, log, and status
 
@@ -307,7 +322,9 @@ These commands inspect host items and their logs. They do not install, remove, s
 ./ae infra log --lines 100 core
 ```
 
-`status.sh` prints each requested item with service-manager state, backend name, and pid.
+`status.sh` prints each requested item in the default mode as a compact service-manager line with state, backend name, and pid.
+
+Pass `--details` for the detailed runtime view with `manager`, raw service-manager `state`, `pid`, and `port`, followed by a multi-line summary for agents and services.
 
 `doctor.sh` prints host basics, discovered binaries, enabled agent install methods, requested item states, and recent logs for unhealthy items. By default it only inspects. Add `--repair` for shallow repair of known generated agent paths that can become unreadable to repo users, or `--repair-full` for recursive agent/service state repair. Use `repo --repair-full` to normalize collaborative aelab source/config/doc paths while skipping `.git`, `shared/`, and agent runtime state. It exits non-zero when requested items are not active/running/waiting.
 
@@ -321,26 +338,27 @@ These commands inspect host items and their logs. They do not install, remove, s
 ./ae infra render <all|brew|caddy|front>
 ```
 
-- `infra/generated/Brewfile` is generated from `config/custom/host/.env`, `config/agents/*.env`, `config/custom/override/agents/*.env`, `config/services/*.env`, and `config/custom/override/services/*.env`
-- `infra/generated/Caddyfile` is generated from `config/custom/repo.ini[agent-ports]`, `AELAB_AGENTS`, and Caddy-enabled services
+- `infra/generated/Brewfile` is generated from `config/host.toml`, `config/agents.toml`, `config/services.toml`, and `config/repo.toml`
+- `infra/generated/Caddyfile` is generated from `[hosts]` and `[agent-ports]` in `config/repo.toml`, `AELAB_AGENTS`, `AELAB_CADDY_TLS`, and Caddy-enabled services
 - `infra/generated/index.html` is generated from `infra/core/index.html`, `AELAB_AGENTS`, `AELAB_SERVICES`, and optional `AELAB_PROJECTS`
 - `infra/commands/render.sh brew` runs automatically during `bootstrap.sh` before `brew bundle`
 - `infra/commands/render.sh front` also refreshes the generated index page from `infra/core/index.html`
-- [`config/services/core.env`](../config/services/core.env) expands to the core service tree (`core-http`, `core-tty`, and `caddy`)
+- `config/services.toml[core]` expands to the core service tree (`core-http`, `core-tty`, and `caddy`)
 
 `infra/generated/` is host-local and gitignored, so generated artifacts like the Brewfile, Caddyfile, core binaries, and generated landing page are not tracked.
 
 ## config model
 
-- [`config/services/*.env`](../config/services/) define shared-service runtime defaults, with same-name overrides in [`config/custom/override/services/`](../config/custom/override/services/)
-- [`config/agents/*.env`](../config/agents/) define agent-kind metadata and command templates, with same-name overrides in [`config/custom/override/agents/`](../config/custom/override/agents/)
-- [`config/custom/repo.ini`](../config/custom/repo.ini) defines parsed repo-wide sections such as host alias URLs and gateway ports
-- [`config/custom/override/infra/*.sh`](../config/custom/override/infra/) adds host-specific infra subcommands, or overrides same-name built-in commands
+- [`config/services.toml`](../config/services.toml) defines shared-service runtime defaults
+- [`config/agents.toml`](../config/agents.toml) defines agent-kind metadata and command templates
+- [`config/repo.toml`](../config/repo.toml) defines parsed repo-wide sections such as host alias URLs and gateway ports
+- `config/host.toml` is ignored by git and can override agent/service manifest values on one host
+- [`config/infra/*.sh`](../config/infra/) adds host-specific infra subcommands, or overrides same-name built-in commands
 - service manifests can use `__AELAB_SERVICE_DIR__` as the per-service runtime base directory, which defaults to `__AELAB_ROOT__/state/runtimes/__SERVICE_ID__`
 - service manifests can use `AELAB_SERVICE_ENV` for launchd/systemd environment variables, using `|` between assignments
 - agent manifests can also set dedicated home or extra env vars when a tool supports them
-- agents can use optional env files under `config/custom/env/`; `config/custom/env/agents.env` is shared by all agents, and `config/custom/env/agents/<agent-id>.env` such as `config/custom/env/agents/007.env` can override or extend it. `ae <agent-id> ...` loads shared values first and per-agent values second before running the native command. Linux also reads both files through systemd `EnvironmentFile`, and macOS renders the effective values into the launchd plist during `install`/`start`
-- services can use optional env files under `config/custom/env/`; `config/custom/env/services.env` is shared by all services, and `config/custom/env/services/<service-id>.env` such as `config/custom/env/services/postgres.env` can override or extend it. Managed services load manifest `AELAB_SERVICE_ENV` first, then shared values, then per-service values
+- agents can use optional env files under `config/env/`; `config/env/agents.env` is shared by all agents, and `config/env/<agent-id>.env` such as `config/env/007.env` can override or extend it. `ae <agent-id> ...` loads shared values first and per-agent values second before running the native command. Linux also reads both files through systemd `EnvironmentFile`, and macOS renders the effective values into the launchd plist during `install`/`start`
+- services can use optional env files under `config/env/`; `config/env/services.env` is shared by all services, and `config/env/<service-id>.env` such as `config/env/postgres.env` can override or extend it. Managed services load manifest `AELAB_SERVICE_ENV` first, then shared values, then per-service values
 - [`infra/templates/`](templates/) define the rendered launchd/systemd unit shapes
 
 ## state
@@ -394,41 +412,14 @@ infra/
       mysql-server.sh
       postgres-server.sh
 config/
-  agents/
-    claude.env
-    codex.env
-    gemini.env
-    goose.env
-    hermes.env
-    mercury.env
-    moltis.env
-    nanobot.env
-    nullclaw.env
-    openclaw.env
-    pi.env
-    picoclaw.env
-    zeroclaw.env
-  services/
-    core.env
-    core-http.env
-    core-tty.env
-    mongodb.env
-    mysql.env
-    nats.env
-    postgres.env
-    tailscale.env
+  agents.toml
+  services.toml
+  repo.toml
   custom/
-    repo.ini
-    host/
-      .env
-      .env.example-macos
-      .env.example-linux
-      .env.example-wsl
+    host.toml
+    host.example.toml
     override/
-      agents/
-        .gitkeep
       infra/
-      services/
 state/
   logs/
     agent/
@@ -447,3 +438,4 @@ state/
 - on macOS, configured shared services are installed as rendered launchd plists
 - enabled agents are installed one per id, while the CLI still uses plain `NNN` ids and resolves them internally
 - `ae <agent-id> start` remains the single source of truth for how an agent is launched; infra just delegates into the main CLI
+

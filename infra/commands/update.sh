@@ -44,6 +44,60 @@ git_status_short() {
   git -C "$AELAB_ROOT" status --short
 }
 
+git_upstream_ref() {
+  git -C "$AELAB_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true
+}
+
+git_head_sha() {
+  git -C "$AELAB_ROOT" rev-parse HEAD
+}
+
+git_ref_sha() {
+  git -C "$AELAB_ROOT" rev-parse "$1"
+}
+
+prepare_ssh_key() {
+  local ssh_key="${AELAB_SSH_KEY:-}"
+  local ssh_key_path
+
+  [[ -n "$ssh_key" ]] || return 0
+
+  case "$ssh_key" in
+    /*|\~/*)
+      ssh_key_path="${ssh_key/#\~/$HOME}"
+      ;;
+    */*)
+      ssh_key_path="$AELAB_ROOT/$ssh_key"
+      ;;
+    *)
+      ssh_key_path="$HOME/.ssh/$ssh_key"
+      ;;
+  esac
+
+  if [[ ! -f "$ssh_key_path" ]]; then
+    echo "[update] SSH key not found; skipping SSH agent setup: $ssh_key_path" >&2
+    return 0
+  fi
+
+  eval "$(ssh-agent -s)" >/dev/null
+  ssh-add "$ssh_key_path"
+}
+
+repo_already_current() {
+  local upstream="$1"
+  local status="$2"
+  local head_sha
+  local upstream_sha
+
+  [[ -n "$upstream" ]] || return 1
+  [[ -z "$status" ]] || return 1
+
+  head_sha="$(git_head_sha)" || return 1
+  upstream_sha="$(git_ref_sha "$upstream")" || return 1
+
+  [[ "$head_sha" == "$upstream_sha" ]]
+}
+
 confirm_broad_restart() {
   local -a requested=("$@")
   local -a expanded=()
@@ -138,10 +192,27 @@ restore_local_changes() {
   exit 1
 }
 
+run_post_update_hook() {
+  local status="$?"
+
+  trap - EXIT
+  export AELAB_UPDATE_EXIT_STATUS="$status"
+  set +e
+  run_infra_hook post-update "${UPDATE_RESTART_ARGS[@]}"
+  local hook_status="$?"
+  set -e
+  if ((hook_status != 0)); then
+    echo "[update] post-update hook failed with status ${hook_status}" >&2
+  fi
+  exit "$status"
+}
+
 main() {
   local -a restart_args=()
   local arg
   local script_dir
+  local upstream
+  local status
 
   DO_PULL=1
   DO_RESTART=1
@@ -190,8 +261,21 @@ main() {
     restart_args=(core)
   fi
 
+  UPDATE_RESTART_ARGS=("${restart_args[@]}")
+  trap run_post_update_hook EXIT
+  run_infra_hook pre-update "${restart_args[@]}"
+  prepare_ssh_key
+
   log "fetching"
   run git -C "$AELAB_ROOT" fetch --prune
+
+  upstream="$(git_upstream_ref)"
+  status="$(git_status_short)"
+  if ((DO_PULL == 1)) && repo_already_current "$upstream" "$status"; then
+    log "already up to date with $upstream"
+    log "completed"
+    exit 0
+  fi
 
   stash_local_changes
 

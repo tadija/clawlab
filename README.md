@@ -2,33 +2,23 @@
 
 **run many AI agents as one system**
 
-> **works on**: macOS | Linux | WSL  
-> **docs**: home | [config](config/README.md) | [infra](infra/README.md)  
+> **docs**: home | [config](config/README.md) | [infra](infra/README.md)
 >  
-> **powered by**: [openclaw](https://github.com/openclaw/openclaw) | [picoclaw](https://github.com/sipeed/picoclaw) | [zeroclaw](https://github.com/zeroclaw-labs/zeroclaw) | [nullclaw](https://github.com/nullclaw/nullclaw)  
-> [nanobot](https://github.com/HKUDS/nanobot) | [pi](https://github.com/earendil-works/pi) | [hermes](https://github.com/nousresearch/hermes-agent) | [moltis](https://github.com/moltis-org/moltis) | [mercury](https://github.com/cosmicstack-labs/mercury-agent) | [goose](https://github.com/block/goose)  
-> [codex](https://github.com/openai/codex) | [claude](https://github.com/anthropics/claude-code) | [gemini](https://github.com/google-gemini/gemini-cli)  
+> **play with**: [openclaw](https://github.com/openclaw/openclaw) | [picoclaw](https://github.com/sipeed/picoclaw) | [zeroclaw](https://github.com/zeroclaw-labs/zeroclaw) | [nullclaw](https://github.com/nullclaw/nullclaw) | [nanobot](https://github.com/HKUDS/nanobot) | [pi](https://github.com/earendil-works/pi) | [hermes](https://github.com/nousresearch/hermes-agent) | [moltis](https://github.com/moltis-org/moltis) | [mercury](https://github.com/cosmicstack-labs/mercury-agent) | [goose](https://github.com/block/goose) | [codex](https://github.com/openai/codex) | [claude](https://github.com/anthropics/claude-code) | [gemini](https://github.com/google-gemini/gemini-cli)  
+>
+> **works on**: macOS | Linux | WSL
 
-## what this is
+## intro
 
-`aelab` is a repo-native control plane for operating multiple AI agents across one or more hosts.
+`aelab` is a repo-native control plane for people who want to run more than one AI agent system on machines they actually control. AI agent tooling is fragmented: different agents come with different CLIs, auth flows, runtime assumptions, and service models. `aelab` does **not** replace them with yet another framework; it gives them a shared operating model instead:
 
-AI agent tooling is fragmented: different agents come with different CLIs, auth flows, runtime assumptions, and service models. `aelab` does **not** replace them with yet another framework. It gives them a shared operating model instead:
-- each agent lives as a plain directory in one repo
-- manifests define reusable runtime conventions
-- host config decides what runs where
-- one CLI and one infra model operate the whole setup
+- one repo to hold many agent workdirs, plus a shared space and tooling between them
+- one host config that decides what runs where across hosts, plus reusable manifests
+- one CLI and infra model for bootstrap, install, start, stop, logs, and native command forwarding
+- one web + tty front door for day-2 operations, including live status and host shell access
+- many customizable templates and manifests, with bundled agents and services as examples
 
-The result is a mixed fleet that stays legible, inspectable, scriptable, and customizable while preserving each agent's native commands and workflow.
-
-## what you get
-
-- manage multiple agents across multiple hosts as plain directories in one repo
-- bootstrap and command unrelated agents from one place
-- forward native agent commands directly (`help`, `onboard`, `status`, `--tui`, etc.)
-- expose live status of agents and services through the built-in web UI
-- access running host shells from desktop or mobile through the built-in tty server
-- customize templates and manifests freely; bundled agents and services are examples
+It is **not** trying to replace native CLIs, Docker, or systemd. It sits one layer above them and makes a heterogeneous agent setup behave like one operable system: legible, inspectable, scriptable, and customizable while preserving each agent's native commands and workflow.
 
 ## quick mental model
 
@@ -38,13 +28,75 @@ The result is a mixed fleet that stays legible, inspectable, scriptable, and cus
 - `shared/` is common space across agents
 - `ae` is the single CLI entrypoint
 
-## quick start
+## architecture
+
+```text
+                                  operators
+                       ┌──────────────────────────┐
+                       │ ./ae | web UI | tty UI   │
+                       └────────────┬─────────────┘
+                                    │
+                                    ▼
+                         repo-native control plane
+                    ┌────────────────────────────────┐
+                    │ ae + infra/commands + render   │
+                    └────────────┬───────────────────┘
+                                 │
+               ┌─────────────────┼─────────────────┐
+               │                 │                 │
+               ▼                 ▼                 ▼
+         agents/            config/            shared/
+   plain agent dirs   manifests + host env   common space
+               │                 │
+               └────────────┬────┘
+                            ▼
+                 generated host artifacts
+          launchd/systemd units + Brewfile + Caddyfile
+                            │
+                            ▼
+                    running agents/services
+                            │
+                            ▼
+                  routed by Caddy / local ports
+```
+
+## quickstart in 5 minutes
+
+This is the fastest blessed path to a useful single-host setup:
 
 - run managed agents and shared services under a dedicated `agent` user
 - clone this repo into a shared host path and make it writable by `agent` and other groups/users
-- without `swift` on `$PATH`, invoke `bash infra/commands/bootstrap.sh` directly
-- make a few agents: `./ae make 001-codex && ./ae make 002-claude && ./ae make 003-gemini`
-- define your `config/custom/host/.env` file and run `./ae infra bootstrap && ./ae infra start`
+- without `swift` on `$PATH` - invoke `bash infra/commands/bootstrap.sh`, otherwise continue
+- copy the host template: `cp config/host.example.toml config/host.toml`
+- make one agent, for example: `./ae make 001-codex`
+- set `AELAB_AGENTS="001"` and `AELAB_SERVICES="core"` in `config/host.toml`
+- run `./ae infra bootstrap && ./ae infra start`
+- verify with `./ae infra status && ./ae infra doctor`
+- open the web UI with `./ae infra web`
+
+Example:
+
+```bash
+git clone git@github.com:tadija/aelab.git /srv/aelab
+cd /srv/aelab
+
+cp config/host.example.toml config/host.toml
+./ae make 001-codex
+
+$EDITOR config/host.toml
+# set at minimum:
+# AELAB_HOST = "dev-server"
+# AELAB_ROOT = "/srv/aelab"
+# AELAB_USER = "agent"
+# AELAB_GROUP = "agent"
+# AELAB_AGENTS = "001"
+# AELAB_SERVICES = "core"
+
+./ae infra bootstrap
+./ae infra start
+./ae infra status
+./ae infra doctor
+```
 
 ## repo layout
 
@@ -79,9 +131,11 @@ ae
     ├── restart [<target>...]                 # restart managed agents/services
     ├── status [<target>...]                  # status managed agents/services
     ├── doctor [<target>...]                  # show diagnostics and short logs
+    ├── web                                   # open the web UI
     ├── log [<target>...]                     # tail logs from state directory
     ├── render [<all|brew|caddy|front>]       # render generated infra files
-    └── update [<target>...]                  # pull latest and restart targets
+    ├── update [<target>...]                  # pull latest and restart targets
+    └── deploy [<host>...]                    # ask remote hosts to self-update
 ```
 
 > **target** can be explicit as `agents` or `services` (affects all), or an agent id, or a service id; for example: `agents services` or `003 005 007` or `core some-service` (or any combination of those).
@@ -139,14 +193,14 @@ Stop a foreground agent run with `Ctrl-C`.
 ./ae remove 011
 ```
 
-### Customize the host `.env`
+### Customize host config
 
-Examples: [macOS](config/custom/host/.env.example-macos) | [Linux](config/custom/host/.env.example-linux) | [WSL](config/custom/host/.env.example-wsl)
+Start from [config/host.example.toml](config/host.example.toml), uncomment the platform block, and edit it for the current host.
 
-```bash
-AELAB_AGENTS="001 002 003 004 005 006 007"
-AELAB_SERVICES="core" # core expands to core-http, core-tty, and caddy
-AELAB_PROJECTS=".dotfiles=/Users/tadija/.dotfiles aelab=/Users/Shared/aelab"
+```toml
+AELAB_AGENTS = "001 002 003 004 005 006 007"
+AELAB_SERVICES = "core" # core expands to core-http, core-tty, and caddy
+AELAB_PROJECTS = ".dotfiles=/Users/tadija/.dotfiles aelab=/Users/Shared/aelab"
 ```
 
 ### Manage host-assigned infra targets
@@ -179,7 +233,17 @@ Omit explicit targets to affect all.
 ./ae infra render <all|brew|caddy|front>
 ```
 
+### deploy to configured hosts
+
+```bash
+./ae infra deploy
+./ae infra deploy dev-server app-server
+./ae infra deploy --dry-run
+```
+
 ## screenshots
+
+Web UI is the operator surface for status, tty access, mobile recovery, etc.; open it with `./ae infra web`.
 
 ### desktop
 
@@ -226,11 +290,13 @@ Omit explicit targets to affect all.
 ## technical notes
 
 - requires `swift` on `$PATH` since [`ae`](ae) is a [Swift](https://github.com/swiftlang/swift) script
-- agent kinds are defined in [`config/agents/`](config/agents/)
-- shared services are defined in [`config/services/`](config/services/)
-- repo-wide parsed config is defined in [`config/custom/repo.ini`](config/custom/repo.ini)
+- agent kinds are defined in [`config/agents.toml`](config/agents.toml)
+- shared services are defined in [`config/services.toml`](config/services.toml)
+- repo-wide parsed config is defined in [`config/repo.toml`](config/repo.toml)
+- per-host config and agent/service manifest overrides live in `config/host.toml`
 - toggle version control manually in [`.gitignore`](.gitignore)
 
 ---
 
 `done for fun`
+

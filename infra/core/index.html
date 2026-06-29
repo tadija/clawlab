@@ -88,6 +88,9 @@
     p { margin: 0 0 16px; }
     .meta { color: var(--muted); margin-top: 28px; display: grid; gap: 4px; font-size: 1rem; }
     .meta p { margin: 0; }
+    .meta-toggle { appearance: none; border: 0; background: transparent; color: inherit; padding: 0; font: inherit; cursor: pointer; }
+    .meta-toggle:hover code { color: var(--accent); }
+    .meta-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
     .index-section { margin-top: 24px; }
     .index-section h2 { margin: 0 0 12px; font-size: 0.95rem; line-height: 1.2; }
     .section-toggle { appearance: none; border: 0; background: transparent; color: var(--text); padding: 0; display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; }
@@ -174,12 +177,13 @@
     .terminal-number { width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--control-active-bg) 22%, transparent); color: var(--control-active-bg); font-size: 0.78rem; line-height: 1; font-weight: 800; }
     .action-menu-item:hover { background: var(--control-bg); text-decoration: none; color: var(--accent); }
     .action-menu-item:hover .terminal-number { background: var(--accent); color: var(--control-active-text); }
-    .status-running, .status-configured, .status-interactive, .status-unavailable, .status-unknown { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; line-height: 1.25; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .status-running, .status-configured, .status-interactive, .status-unavailable, .status-unknown, .status-yolo { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 0.75rem; line-height: 1.25; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
     .status-running { background: var(--status-running-bg); color: var(--status-running-text); }
     .status-configured { background: var(--status-configured-bg); color: var(--status-configured-text); }
     .status-interactive { background: var(--status-interactive-bg); color: var(--status-interactive-text); }
     .status-unavailable { background: var(--status-unavailable-bg); color: var(--status-unavailable-text); }
     .status-unknown { background: var(--status-unknown-bg); color: var(--status-unknown-text); }
+    .status-yolo { background: #fee4e2; color: #b42318; }
     @media (max-width: 640px) {
     .controls { margin-left: auto; }
     }
@@ -228,7 +232,7 @@ __TAILSCALE_NAV_HTML__
     </div>
 __AGENT_LINKS_HTML__
     <div class="meta">
-      <p><a id="reset-look" href="" aria-label="Reset page look" title="Reset page look">Generated at</a> <code>__GENERATED_AT__</code>.</p>
+      <p><a id="reset-look" href="" aria-label="Reset page look" title="Reset page look">Generated</a> <span id="generated-meta-label">at</span> <button class="meta-toggle" id="generated-meta-toggle" type="button" aria-label="Show commit hash" title="Show commit hash" data-generated-at="__GENERATED_AT__" data-generated-commit="__GENERATED_COMMIT__"><code>__GENERATED_AT__</code></button>.</p>
     </div>
   </main>
   <script>
@@ -245,14 +249,21 @@ __AGENT_LINKS_HTML__
       const pinnedList = document.getElementById('pinned-sessions-list');
       const hostTerminalsToggle = document.getElementById('host-terminals-toggle');
       const hostTerminalMenuPanel = document.getElementById('host-terminal-menu-panel');
+      const generatedMetaLabel = document.getElementById('generated-meta-label');
+      const generatedMetaToggle = document.getElementById('generated-meta-toggle');
       let terminalShortcutTargets = [];
+      let hostShortcutTargets = [];
       const themeKey = 'theme';
       const lookURL = '/tty/look';
       const activeHost = root.dataset.host || '';
       const tintKey = `aelab-tint:${activeHost}`;
+      const generatedMetaModeKey = `aelab-generated-meta-mode:${activeHost}`;
+      const globalSessionsChangedKey = 'aelab-sessions-changed';
+      const sessionsChangedKey = `aelab-sessions-changed:${activeHost}`;
       const sectionKeyPrefix = 'aelab-section-collapsed:';
       const storedTheme = localStorage.getItem(themeKey);
       const storedTint = localStorage.getItem(tintKey);
+      const storedGeneratedMetaMode = localStorage.getItem(generatedMetaModeKey);
       const currentDefaultTint = () => getComputedStyle(root).getPropertyValue('--accent-default').trim() || '#0f766e';
       const scrollActiveHostIntoView = () => {
         const activeLink = hostList?.querySelector('.segmented-link.is-active');
@@ -265,6 +276,12 @@ __AGENT_LINKS_HTML__
         const centeredLeft = linkLeft - (containerWidth - linkRect.width) / 2;
         hostList.scrollLeft = Math.min(Math.max(0, centeredLeft), maxScroll);
       };
+      const syncHostShortcuts = () => {
+        hostShortcutTargets = Array.from(document.querySelectorAll('[data-host-shortcut]'))
+          .map((element) => element.getAttribute('href') || '')
+          .filter(Boolean)
+          .slice(0, 9);
+      };
       const syncSessionsToggle = () => {
         if (!hostTerminalsToggle || !pinnedSection) return;
         const collapsed = pinnedSection.classList.contains('is-collapsed');
@@ -273,6 +290,22 @@ __AGENT_LINKS_HTML__
         hostTerminalsToggle.setAttribute('aria-label', title);
         hostTerminalsToggle.setAttribute('title', title);
         tailscaleRow?.classList.toggle('has-sessions-open', !collapsed && !pinnedSection.hidden);
+      };
+      const applyGeneratedMetaMode = (mode) => {
+        if (!generatedMetaToggle) return;
+        const nextMode = mode === 'commit' ? 'commit' : 'time';
+        const code = generatedMetaToggle.querySelector('code');
+        if (!code) return;
+        generatedMetaToggle.dataset.showing = nextMode;
+        code.textContent = nextMode === 'commit'
+          ? generatedMetaToggle.dataset.generatedCommit || ''
+          : generatedMetaToggle.dataset.generatedAt || '';
+        if (generatedMetaLabel) {
+          generatedMetaLabel.textContent = nextMode === 'commit' ? 'from' : 'at';
+        }
+        const label = nextMode === 'commit' ? 'Show generated timestamp' : 'Show commit hash';
+        generatedMetaToggle.setAttribute('aria-label', label);
+        generatedMetaToggle.setAttribute('title', label);
       };
       const applyTint = (value) => {
         root.style.setProperty('--accent', value);
@@ -309,6 +342,8 @@ __AGENT_LINKS_HTML__
       } else if (tintPicker) {
         tintPicker.value = currentDefaultTint();
       }
+      applyGeneratedMetaMode(storedGeneratedMetaMode === 'commit' ? 'commit' : 'time');
+      syncHostShortcuts();
       requestAnimationFrame(scrollActiveHostIntoView);
       let lastResizeWidth = window.innerWidth;
       window.addEventListener('resize', () => {
@@ -327,6 +362,13 @@ __AGENT_LINKS_HTML__
       resetLook?.addEventListener('click', (event) => {
         event.preventDefault();
         resetTint();
+      });
+
+      generatedMetaToggle?.addEventListener('click', () => {
+        const showingCommit = generatedMetaToggle.dataset.showing === 'commit';
+        const nextMode = showingCommit ? 'time' : 'commit';
+        applyGeneratedMetaMode(nextMode);
+        localStorage.setItem(generatedMetaModeKey, nextMode);
       });
 
       tintPicker?.addEventListener('input', (event) => {
@@ -482,15 +524,22 @@ __AGENT_LINKS_HTML__
         if (event.target.closest('input, textarea, select, button, a, summary, [contenteditable="true"]')) {
           return;
         }
-        if (!/^[1-9]$/.test(event.key)) {
+        const digit = event.code?.match(/^Digit([1-9])$/)?.[1] || (/^[1-9]$/.test(event.key) ? event.key : '');
+        if (!digit) {
           return;
         }
-        const target = terminalShortcutTargets[Number(event.key) - 1];
+        const target = event.shiftKey
+          ? hostShortcutTargets[Number(digit) - 1]
+          : terminalShortcutTargets[Number(digit) - 1]?.path;
         if (!target) {
           return;
         }
         event.preventDefault();
-        window.open(target.path, '_blank', 'noreferrer');
+        if (event.shiftKey) {
+          window.location.href = target;
+        } else {
+          window.open(target, '_blank', 'noreferrer');
+        }
       });
 
       const escapeHTML = (value) => String(value ?? '')
@@ -506,9 +555,10 @@ __AGENT_LINKS_HTML__
           ...pinned.map((session) => ({
             kind: 'aelab',
             path: String(session.path || session.key || '/tty/'),
-            label: String(session.projectTitle || session.agentId || session.path || session.key || '/tty/'),
+            label: String(session.projectTitle || session.agentLabel || session.agentId || session.path || session.key || '/tty/'),
             clients: Number.isFinite(Number(session.clients)) ? Number(session.clients) : 0,
             workspace: session.workspace ? String(session.workspace) : '',
+            yolo: session.launchMode === 'agentYoloTui',
           })),
           ...tmuxSessions.map((session) => {
             const name = String(session.name || '');
@@ -570,7 +620,8 @@ __AGENT_LINKS_HTML__
           const number = numberForPath.get(target.path) || '';
           if (target.kind === 'aelab') {
             const workspace = target.workspace ? ` <span class="detail-cwd">cwd: <code>${escapeHTML(target.workspace)}</code></span>` : '';
-            targetRows.push(`<li class="index-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-running">aelab</span></div><div class="row-details"><span class="detail-clients">clients: <code>${target.clients}</code></span>${workspace}</div></div></li>`);
+            const yolo = target.yolo ? ' <span class="status-yolo">yolo</span>' : '';
+            targetRows.push(`<li class="index-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-running">aelab</span>${yolo}</div><div class="row-details"><span class="detail-clients">clients: <code>${target.clients}</code></span>${workspace}</div></div></li>`);
             return;
           }
           targetRows.push(`<li class="index-row"><div class="row-main"><div class="row-title"><a href="${escapeHTML(target.path)}" target="_blank" rel="noreferrer"><span class="terminal-number">${escapeHTML(number)}</span> ${escapeHTML(target.label)}</a> <span class="status-interactive">tmux</span></div><div class="row-details"><span class="detail-clients">attached: <code>${target.attached}</code></span><span class="detail-windows">windows: <code>${target.windows}</code></span></div></div></li>`);
@@ -627,13 +678,34 @@ __AGENT_LINKS_HTML__
         scrollActiveHostIntoView();
       };
 
+      let refreshSessionsTimer = null;
       const refreshSessions = () => {
         fetch('/tty/sessions', { cache: 'no-store' })
           .then((response) => response.ok ? response.json() : { labSessions: [], tmuxSessions: [] })
           .then((payload) => renderTerminalTargets(payload))
           .catch(() => renderTerminalTargets({ labSessions: [], tmuxSessions: [] }));
       };
+      const scheduleRefreshSessions = () => {
+        if (refreshSessionsTimer) {
+          clearTimeout(refreshSessionsTimer);
+        }
+        refreshSessionsTimer = setTimeout(() => {
+          refreshSessionsTimer = null;
+          refreshSessions();
+        }, 80);
+      };
       refreshSessions();
+      window.addEventListener('storage', (event) => {
+        if (event.key === globalSessionsChangedKey || event.key === sessionsChangedKey) {
+          scheduleRefreshSessions();
+        }
+      });
+      window.addEventListener('focus', scheduleRefreshSessions);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          scheduleRefreshSessions();
+        }
+      });
     })();
   </script>
 </body>

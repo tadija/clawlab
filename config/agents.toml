@@ -1,0 +1,120 @@
+[claude]
+AELAB_AGENT_KIND = "claude"
+AELAB_AGENT_BREW_CASKS = "claude-code"
+AELAB_AGENT_TUI_ARGS = "claude"
+AELAB_AGENT_TUI_YOLO_ARGS = "claude|--dangerously-skip-permissions"
+AELAB_AGENT_SETUP_ARGS = "claude"
+AELAB_AGENT_FORWARD_PREFIX = "claude"
+
+[codex]
+AELAB_AGENT_KIND = "codex"
+AELAB_AGENT_BREW_CASKS = "codex"
+AELAB_AGENT_TUI_ARGS = "codex"
+AELAB_AGENT_TUI_YOLO_ARGS = "codex|--dangerously-bypass-approvals-and-sandbox"
+AELAB_AGENT_SETUP_ARGS = "codex"
+AELAB_AGENT_FORWARD_PREFIX = "codex"
+
+[gemini]
+AELAB_AGENT_KIND = "gemini"
+AELAB_AGENT_BREW_PACKAGES = "gemini-cli"
+AELAB_AGENT_TUI_ARGS = "gemini|--skip-trust"
+AELAB_AGENT_TUI_YOLO_ARGS = "gemini|--skip-trust|--yolo"
+AELAB_AGENT_SETUP_ARGS = "gemini"
+AELAB_AGENT_FORWARD_PREFIX = "gemini"
+
+[goose]
+AELAB_AGENT_KIND = "goose"
+AELAB_AGENT_BREW_PACKAGES = "block-goose-cli"
+AELAB_AGENT_ENV = "GOOSE_PATH_ROOT=__AGENT_DIR__/.goose|GOOSE_CONFIG_DIR=__AGENT_DIR__/.goose/config"
+AELAB_AGENT_SETUP_ARGS = "goose|configure"
+AELAB_AGENT_TUI_ARGS = "goose|session"
+AELAB_AGENT_FORWARD_PREFIX = "goose"
+
+[hermes]
+AELAB_AGENT_KIND = "hermes"
+AELAB_AGENT_ENV = "HOME=__AGENT_DIR__|HERMES_HOME=__AGENT_DIR__/.hermes"
+AELAB_AGENT_INSTALL_KIND = "script"
+AELAB_AGENT_INSTALL_SCRIPT = "infra/utils/installers/hermes.sh"
+AELAB_AGENT_SETUP_ARGS = "hermes|setup"
+AELAB_AGENT_TUI_ARGS = "hermes|--tui"
+AELAB_AGENT_START_ARGS = "hermes|gateway"
+AELAB_AGENT_STOP_ARGS = "hermes|gateway|stop"
+AELAB_AGENT_FORWARD_PREFIX = "hermes"
+
+[mercury]
+AELAB_AGENT_KIND = "mercury"
+AELAB_AGENT_ENV = "HOME=__AGENT_DIR__|MERCURY_HOME=__AGENT_DIR__/.mercury"
+AELAB_AGENT_INSTALL_KIND = "script"
+AELAB_AGENT_INSTALL_SCRIPT = "infra/utils/installers/mercury.sh"
+AELAB_AGENT_SETUP_ARGS = "mercury|setup"
+AELAB_AGENT_START_ARGS = "mercury|start"
+AELAB_AGENT_STOP_ARGS = "mercury|stop"
+AELAB_AGENT_FORWARD_PREFIX = "mercury"
+
+[moltis]
+AELAB_AGENT_KIND = "moltis"
+AELAB_AGENT_BREW_TAPS = "moltis-org/tap"
+AELAB_AGENT_BREW_PACKAGES = "moltis"
+AELAB_AGENT_ENV = "MOLTIS_CONFIG_DIR=__AGENT_DIR__/config|MOLTIS_DATA_DIR=__AGENT_DIR__/data"
+AELAB_AGENT_START_ARGS = "moltis"
+AELAB_AGENT_START_PORT_FLAG = "--port"
+AELAB_AGENT_FORWARD_PREFIX = "moltis"
+
+[nanobot]
+AELAB_AGENT_KIND = "nanobot"
+AELAB_AGENT_HOME_ENV = "HOME"
+AELAB_AGENT_ENV = "NANOBOT_AGENTS__DEFAULTS__WORKSPACE=__AGENT_DIR__/workspace"
+AELAB_AGENT_BREW_PACKAGES = "uv"
+AELAB_AGENT_INSTALL_KIND = "script"
+AELAB_AGENT_INSTALL_SCRIPT = "infra/utils/installers/nanobot.sh"
+AELAB_AGENT_SETUP_ARGS = "nanobot|onboard"
+AELAB_AGENT_TUI_ARGS = "nanobot|agent"
+AELAB_AGENT_START_ARGS = "nanobot|gateway"
+AELAB_AGENT_START_PORT_FLAG = "--port"
+AELAB_AGENT_FORWARD_PREFIX = "nanobot|__COMMAND__"
+
+[nullclaw]
+AELAB_AGENT_KIND = "nullclaw"
+AELAB_AGENT_HOME_ENV = "NULLCLAW_HOME"
+AELAB_AGENT_BREW_PACKAGES = "nullclaw"
+AELAB_AGENT_SETUP_ARGS = "nullclaw|onboard|--interactive"
+AELAB_AGENT_TUI_ARGS = "nullclaw|agent"
+AELAB_AGENT_START_ARGS = "nullclaw|gateway"
+AELAB_AGENT_START_PORT_FLAG = "--port"
+AELAB_AGENT_FORWARD_PREFIX = "nullclaw"
+
+[openclaw]
+AELAB_AGENT_KIND = "openclaw"
+AELAB_AGENT_BREW_PACKAGES = "openclaw-cli"
+AELAB_AGENT_HOME_ENV = "OPENCLAW_HOME"
+AELAB_AGENT_SETUP_ARGS = "openclaw|setup"
+AELAB_AGENT_TUI_ARGS = "openclaw|tui"
+AELAB_AGENT_START_ARGS = "openclaw|gateway"
+AELAB_AGENT_START_PORT_FLAG = "--port"
+AELAB_AGENT_STOP_ARGS = "openclaw|gateway|stop"
+AELAB_AGENT_FORWARD_PREFIX = "openclaw"
+
+[pi]
+AELAB_AGENT_KIND = "pi"
+AELAB_AGENT_BREW_PACKAGES = "pi-coding-agent"
+AELAB_AGENT_ENV = "PI_HOME=__AGENT_DIR__/.pi"
+AELAB_AGENT_TUI_ARGS = "pi"
+AELAB_AGENT_FORWARD_PREFIX = "pi"
+
+[picoclaw]
+AELAB_AGENT_KIND = "picoclaw"
+AELAB_AGENT_BREW_PACKAGES = "picoclaw"
+AELAB_AGENT_HOME_ENV = "PICOCLAW_HOME"
+AELAB_AGENT_SETUP_ARGS = "picoclaw|onboard"
+AELAB_AGENT_TUI_ARGS = "picoclaw|agent"
+AELAB_AGENT_START_ARGS = "picoclaw|gateway"
+AELAB_AGENT_FORWARD_PREFIX = "picoclaw"
+
+[zeroclaw]
+AELAB_AGENT_KIND = "zeroclaw"
+AELAB_AGENT_BREW_PACKAGES = "zeroclaw"
+AELAB_AGENT_SETUP_ARGS = "zeroclaw|--config-dir|__AGENT_DIR__|onboard|--quick"
+AELAB_AGENT_TUI_ARGS = "zeroclaw|--config-dir|__AGENT_DIR__|agent"
+AELAB_AGENT_START_ARGS = "zeroclaw|--config-dir|__AGENT_DIR__|daemon"
+AELAB_AGENT_START_PORT_FLAG = "--port"
+AELAB_AGENT_FORWARD_PREFIX = "zeroclaw|--config-dir|__AGENT_DIR__"

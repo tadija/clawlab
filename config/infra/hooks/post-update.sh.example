@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Optional local hook run after an update.
+#
+# Copy this file to post-update.sh and customize it for the current host.
+# Keep host-specific ports, tunnel endpoints, service names, and credentials
+# in the local copy only.
+
+# Example: restore a local tunnel/proxy after update.
+if [[ "${PROJECT_RESTORE_LOCAL_TUNNEL:-0}" == "1" ]]; then
+  echo "[post-update] restore local tunnel here"
+fi

@@ -29,6 +29,10 @@ struct Config {
     let shellPath: String
 }
 
+let repoConfigRelativePath = "config/repo.toml"
+let repoConfigDisplayName = URL(fileURLWithPath: repoConfigRelativePath).lastPathComponent
+let hostConfigRelativePath = "config/host.toml"
+
 let logFormatter: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -88,6 +92,7 @@ struct TerminalContext {
 
 struct SessionMetadata {
     let agentId: String?
+    let agentLabel: String?
     let projectTitle: String?
     let workspace: String
     let launchMode: TerminalLaunchMode
@@ -288,8 +293,23 @@ func trim(_ value: String) -> String {
     value.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-func repoConfigEntries(repoRoot: String, section wantedSection: String) -> [(key: String, value: String)] {
-    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent("config/custom/repo.ini").path
+func stripQuotes(_ value: String) -> String {
+    let trimmed = trim(value)
+    if trimmed.count >= 2 {
+        if trimmed.hasPrefix("\"") && trimmed.hasSuffix("\"") {
+            return String(trimmed.dropFirst().dropLast())
+                .replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\\\", with: "\\")
+        }
+        if trimmed.hasPrefix("'") && trimmed.hasSuffix("'") {
+            return String(trimmed.dropFirst().dropLast())
+        }
+    }
+    return trimmed
+}
+
+func configEntries(repoRoot: String, relativePath: String, section wantedSection: String) -> [(key: String, value: String)] {
+    let path = URL(fileURLWithPath: repoRoot).appendingPathComponent(relativePath).path
     guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else {
         return []
     }
@@ -310,13 +330,23 @@ func repoConfigEntries(repoRoot: String, section wantedSection: String) -> [(key
             continue
         }
         let key = trim(String(line[..<separator]))
-        let value = trim(String(line[line.index(after: separator)...]))
+        let value = stripQuotes(String(line[line.index(after: separator)...]))
         if !key.isEmpty && !value.isEmpty {
             entries.append((key: key, value: value))
         }
     }
 
     return entries
+}
+
+func repoConfigEntries(repoRoot: String, section wantedSection: String) -> [(key: String, value: String)] {
+    configEntries(repoRoot: repoRoot, relativePath: repoConfigRelativePath, section: wantedSection)
+}
+
+func hostConfigValue(repoRoot: String, key wantedKey: String) -> String? {
+    configEntries(repoRoot: repoRoot, relativePath: hostConfigRelativePath, section: "")
+        .first { $0.key == wantedKey }?
+        .value
 }
 
 func readHTTPRequest(fd: Int32) -> Data? {
@@ -434,13 +464,18 @@ func urlDecode(_ value: String) -> String {
 
 func agentWorkspace(repoRoot: String, agentId: String) -> String {
     let agentsRoot = URL(fileURLWithPath: repoRoot).appendingPathComponent("agents", isDirectory: true)
+    return agentsRoot.appendingPathComponent(agentDirectoryName(repoRoot: repoRoot, agentId: agentId), isDirectory: true).path
+}
+
+func agentDirectoryName(repoRoot: String, agentId: String) -> String {
+    let agentsRoot = URL(fileURLWithPath: repoRoot).appendingPathComponent("agents", isDirectory: true)
     if let contents = try? FileManager.default.contentsOfDirectory(atPath: agentsRoot.path) {
         let prefix = "\(agentId)-"
         if let match = contents.first(where: { $0.hasPrefix(prefix) }) {
-            return agentsRoot.appendingPathComponent(match, isDirectory: true).path
+            return match
         }
     }
-    return agentsRoot.appendingPathComponent(agentId, isDirectory: true).path
+    return agentId
 }
 
 func parseEnvAssignmentValue(_ raw: String) -> String {
@@ -456,17 +491,17 @@ func parseEnvAssignmentValue(_ raw: String) -> String {
 }
 
 func hostProjects(repoRoot: String) -> [String: String] {
-    let envPath = URL(fileURLWithPath: repoRoot)
-        .appendingPathComponent("config/custom/host/.env")
+    let hostConfigPath = URL(fileURLWithPath: repoRoot)
+        .appendingPathComponent("config/host.toml")
         .path
-    guard let contents = try? String(contentsOfFile: envPath, encoding: .utf8) else {
+    guard let contents = try? String(contentsOfFile: hostConfigPath, encoding: .utf8) else {
         return [:]
     }
 
     for rawLine in contents.split(separator: "\n", omittingEmptySubsequences: false) {
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard line.hasPrefix("AELAB_PROJECTS=") else { continue }
-        let rawValue = String(line.dropFirst("AELAB_PROJECTS=".count))
+        guard line.hasPrefix("AELAB_PROJECTS"), let separator = line.firstIndex(of: "=") else { continue }
+        let rawValue = String(line[line.index(after: separator)...])
         let value = parseEnvAssignmentValue(rawValue)
         var projects: [String: String] = [:]
         for item in value.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
@@ -1345,6 +1380,9 @@ final class TerminalSession {
         if let agentId = metadata.agentId {
             result["agentId"] = agentId
         }
+        if let agentLabel = metadata.agentLabel {
+            result["agentLabel"] = agentLabel
+        }
         if let projectTitle = metadata.projectTitle {
             result["projectTitle"] = projectTitle
         }
@@ -1409,7 +1447,8 @@ final class SessionRegistry {
         lock.unlock()
 
         let spawned = try spawnSession(context: context, config: config)
-        let metadata = SessionMetadata(agentId: context.agentId, projectTitle: context.projectTitle, workspace: context.workspace, launchMode: context.launchMode)
+        let agentLabel = context.agentId.map { agentDirectoryName(repoRoot: config.repoRoot, agentId: $0) }
+        let metadata = SessionMetadata(agentId: context.agentId, agentLabel: agentLabel, projectTitle: context.projectTitle, workspace: context.workspace, launchMode: context.launchMode)
         let session = TerminalSession(key: key, masterFD: spawned.masterFD, pid: spawned.pid, metadata: metadata, pinned: false) { [weak self] closedSession in
             self?.remove(closedSession)
         }
@@ -1501,7 +1540,7 @@ func ttyButtons(repoRoot: String) -> [TTYButton] {
 func renderTTYButtons(repoRoot: String) -> String {
     let buttons = ttyButtons(repoRoot: repoRoot)
     guard !buttons.isEmpty else {
-        return #"        <span style="color:var(--muted);font-size:13px;padding:0 4px;white-space:nowrap;line-height:36px">configure buttons in repo.ini</span>"#
+        return #"        <span style="color:var(--muted);font-size:13px;padding:0 4px;white-space:nowrap;line-height:36px">configure buttons in \#(htmlEscape(repoConfigDisplayName))</span>"#
     }
     return buttons.map { button in
         let label = htmlEscape(button.label)
@@ -1520,7 +1559,10 @@ func terminalPageHTML(repoRoot: String, agentId: String?, projectTitle: String?,
     } else {
         title = "aelab tty"
     }
-    let hostLabel = ProcessInfo.processInfo.hostName.replacingOccurrences(of: #"\.local$"#, with: "", options: .regularExpression)
+    let hostLabel = hostConfigValue(repoRoot: repoRoot, key: "AELAB_HOST")
+        ?? ProcessInfo.processInfo.hostName
+            .replacingOccurrences(of: #"\.local$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\.tail[0-9a-f]+\.ts\.net$"#, with: "", options: .regularExpression)
 
     guard var page = loadTerminalTemplate(repoRoot: repoRoot) else {
         return Data("tty template not found\n".utf8)

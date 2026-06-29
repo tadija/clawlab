@@ -200,6 +200,9 @@ ensure_homebrew() {
 
 ensure_homebrew
 
+log "running preflight checks"
+bash "$(repo_root)/infra/commands/preflight.sh" "$@"
+
 log "rendering Brewfile"
 bash "$(repo_root)/infra/commands/render.sh" brew
 ensure_aelab_state_root

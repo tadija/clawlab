@@ -1,0 +1,70 @@
+# repo-wide parsed config
+
+[hosts]
+dev-server = "https://dev-server/"
+app-server = "https://app-server/"
+data-server = "https://data-server/"
+work-server = "https://work-server/"
+
+[deploy-hosts]
+dev-server = "agent@dev-server:/Users/Shared/.aelab"
+app-server = "agent@app-server:/srv/.aelab"
+data-server = "agent@data-server:/srv/.aelab"
+work-server = "tadija@work-server:2222:/mnt/d/Repos/.aelab"
+
+[agent-ports]
+000 = "42607"
+001 = "18789"
+002 = "18799"
+003 = "18809"
+004 = "18819"
+005 = "42617"
+006 = "42627"
+007 = "8642"
+008 = "8652"
+009 = "3010"
+010 = "3020"
+011 = "18829"
+012 = "3030"
+033 = "18839"
+
+[service-ports]
+core-http = "2108"
+core-tty = "1984"
+mysql = "3306"
+postgres = "5432"
+mongodb = "27017"
+nats = "4222"
+
+[tty-buttons]
+alt = "Alt"
+shift = "Shift"
+reload-tty = "Reload"
+tmux-zoom = "Zoom"
+tmux-mouse = "Mouse"
+
+up = "Up"
+down = "Down"
+left = "Left"
+right = "Right"
+
+ctrl-a = "C-a"
+ctrl-c = "C-c"
+ctrl-d = "C-d"
+ctrl-j = "C-j"
+ctrl-l = "C-l"
+ctrl-r = "C-r"
+ctrl-u = "C-u"
+ctrl-z = "C-z"
+
+escape = "Esc"
+tab = "Tab"
+enter = "Enter"
+backspace = "Bksp"
+delete = "Del"
+
+home = "Home"
+end = "End"
+page-up = "PgUp"
+page-down = "PgDn"
+

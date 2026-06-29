@@ -11,7 +11,7 @@ AELAB_ROOT="${AELAB_ROOT:-$(aelab_root)}"
 AELAB_USER="${AELAB_USER:-}"
 
 if [[ -z "$AELAB_USER" ]]; then
-  echo "AELAB_USER is not set; set it in config/custom/host/.env"
+  echo "AELAB_USER is not set; set it in config/host.toml"
   exit 1
 fi
 

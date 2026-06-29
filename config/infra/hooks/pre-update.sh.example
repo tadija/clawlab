@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Optional local hook run before an update.
+#
+# Copy this file to pre-update.sh and customize it for the current host.
+# Keep host-specific paths, private key names, service names, and network
+# topology in the local copy only.
+
+repo_root="$(cd "$(dirname "$0")/../../.." && pwd)"
+
+# Example: load private host environment if your local setup uses one.
+if [[ -f "$repo_root/config/host.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$repo_root/config/host.env"
+fi
+
+# Example: make an SSH key available for update operations.
+if [[ -n "${PROJECT_SSH_KEY_PATH:-}" && -f "$PROJECT_SSH_KEY_PATH" ]]; then
+  eval "$(ssh-agent -s)" >/dev/null
+  ssh-add "$PROJECT_SSH_KEY_PATH"
+
+  if [[ -n "${PROJECT_HOOK_ENV_FILE:-}" ]]; then
+    {
+      printf 'export SSH_AUTH_SOCK=%q\n' "$SSH_AUTH_SOCK"
+      printf 'export SSH_AGENT_PID=%q\n' "$SSH_AGENT_PID"
+    } >"$PROJECT_HOOK_ENV_FILE"
+  fi
+fi
+
+# Example: pause or reset a local tunnel/proxy before update.
+if [[ "${PROJECT_RESET_LOCAL_TUNNEL:-0}" == "1" ]]; then
+  echo "[pre-update] reset local tunnel here"
+fi

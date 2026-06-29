@@ -1,0 +1,50 @@
+# Copy to config/host.toml, uncomment one platform block, and edit for each machine.
+
+## macOS
+# AELAB_AGENTS = "001 002 003 004 005 006 007 020 021 022 023 024"
+# AELAB_SERVICES = "core"
+#
+# AELAB_HOST = "dev-server"
+# AELAB_USER = "agent"
+# AELAB_GROUP = "staff"
+# AELAB_ROOT = "/Users/Shared/aelab"
+# AELAB_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# AELAB_PROJECTS = "aelab=/Users/Shared/aelab"
+# AELAB_SSH_KEY = "~/.ssh/agent.000"
+#
+# AELAB_TAILSCALE_ONLY = "false"
+# AELAB_CADDY_TLS = "off"
+
+## Optional host-local manifest overrides
+# [services.core-tty]
+# AELAB_SERVICE_USER = "tadija"
+
+## Linux
+# AELAB_AGENTS = "000 008 020 021 022 023 024"
+# AELAB_SERVICES = "core"
+#
+# AELAB_HOST = "app-server"
+# AELAB_USER = "agent"
+# AELAB_GROUP = "agent"
+# AELAB_ROOT = "/srv/aelab"
+# AELAB_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/home/linuxbrew/.linuxbrew/bin"
+# AELAB_PROJECTS = "aelab=/srv/aelab"
+# AELAB_SSH_KEY = "~/.ssh/agent.000"
+#
+# AELAB_TAILSCALE_ONLY = "false"
+# AELAB_CADDY_TLS = "off"
+
+## WSL
+# AELAB_AGENTS = "009 010 011 020 021 022 023 024"
+# AELAB_SERVICES = "core"
+#
+# AELAB_HOST = "work-server"
+# AELAB_USER = "agent"
+# AELAB_GROUP = "agent"
+# AELAB_ROOT = "/mnt/c/Users/Public/aelab"
+# AELAB_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/home/linuxbrew/.linuxbrew/bin"
+# AELAB_PROJECTS = "aelab=/mnt/c/Users/Public/aelab"
+# AELAB_SSH_KEY = "~/.ssh/agent-007"
+#
+# AELAB_TAILSCALE_ONLY = "false"
+# AELAB_CADDY_TLS = "off"

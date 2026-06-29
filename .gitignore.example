@@ -8,6 +8,14 @@ Thumbs.db
 agents/**/.local/
 agents/**/cron/jobs.json
 
+# custom
+config/host.toml
+config/env/*.env
+config/infra/hooks/pre-update.sh
+config/infra/hooks/post-update.sh
+infra/generated/
+state/
+
 # openclaw
 agents/**/completions/
 agents/**/devices/
@@ -17,16 +25,21 @@ agents/**/media/
 agents/**/npm/
 agents/**/telegram/
 agents/**/*.bak*
+agents/**/codex-home/
 agents/**/*.sqlite*
 agents/**/auth-profiles.json
 agents/**/auth-state.json
 agents/**/exec-approvals.json
 agents/**/models.json
+agents/**/openclaw.json.last-good
+agents/**/plugin-skills/
 agents/**/plugin-runtime-deps
 agents/**/sessions.json*
 agents/**/*.trajectory.jsonl
 agents/**/*.trajectory-path.json
+agents/**/tui/last-session.json
 agents/**/update-check.json
+agents/**/workspace-attestations/
 agents/**/workspace-state.json
 agents/**/workspace/*audio*
 
@@ -75,17 +88,10 @@ agents/**/syscall*
 agents/**/brain*
 agents/**/*.db*
 
-# local infra/state
-config/custom/host/.env
-config/custom/env/*.env
-config/custom/env/**/*.env
-config/custom/override/**/core-tty.env
-infra/generated/
-state/
-
 # custom
 /dispatcher/
 /graveyard/
 shared/icloud
 shared/gdrive
 shared/projects
+

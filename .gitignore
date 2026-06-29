@@ -6,6 +6,12 @@ Thumbs.db
 .nvim/
 .vscode/
 
+# custom
+config/host.toml
+config/env/*.env
+infra/generated/
+state/
+
 # agents (ignore everything by default)
 agents/**
 
@@ -14,12 +20,9 @@ agents/**
 !agents/**/
 !agents/**/.gitkeep
 
-# ignore workspace dirs inside agents
+# ignore specific paths
 agents/**/workspace/
-
-# local infra/state
-config/custom/host/.env
-config/custom/env/*.env
-config/custom/env/**/*.env
-infra/generated/
-state/
+agents/**/.local/
+agents/**/cron/jobs.json
+config/infra/hooks/pre-update.sh
+config/infra/hooks/post-update.sh
